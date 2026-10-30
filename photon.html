@@ -1,0 +1,2647 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фотон — генератор фонов</title>
+<style>
+  :root {
+    --bg: #0c0c0e;
+    --panel: #141417;
+    --panel-2: #1b1b1f;
+    --line: #2a2a30;
+    --text: #e9e9ee;
+    --dim: #8b8b97;
+    --accent: #6c8cff;
+    --warn: #d8a13a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    overflow: hidden;
+  }
+
+  /* --- превью --- */
+  #stage {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 28px;
+    min-width: 0;
+    background:
+      radial-gradient(circle at 50% 40%, #17171b 0%, #0a0a0c 70%);
+  }
+  #wrap {
+    position: relative;
+    box-shadow: 0 24px 80px rgba(0,0,0,.75);
+    line-height: 0;
+  }
+  canvas#view { display: block; cursor: grab; max-width: 100%; max-height: 100%; }
+  canvas#view.dragging { cursor: grabbing; }
+  #marker {
+    position: absolute;
+    width: 14px; height: 14px;
+    margin: -7px 0 0 -7px;
+    border: 1.5px solid rgba(255,255,255,.85);
+    border-radius: 50%;
+    pointer-events: none;
+    mix-blend-mode: difference;
+    transition: opacity .15s;
+  }
+  #marker::after {
+    content: '';
+    position: absolute; inset: 5px;
+    background: rgba(255,255,255,.9);
+    border-radius: 50%;
+  }
+  #stagehud {
+    position: absolute; left: 28px; bottom: 20px;
+    color: var(--dim); font-size: 11px; letter-spacing: .02em;
+  }
+
+  /* --- панель --- */
+  #panel {
+    background: var(--panel);
+    border-left: 1px solid var(--line);
+    overflow-y: auto;
+    padding: 14px 14px 60px;
+  }
+  h1 { font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin: 4px 0 14px; font-weight: 600; }
+  /* Отметка сборки: чтобы в отзыве дизайнера было понятно, какой файл у него на руках. */
+  #build { float: right; font-weight: 400; font-size: 10px; letter-spacing: .02em; text-transform: none; opacity: .65; }
+  .block { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; background: var(--panel-2); }
+  .block > h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--dim); margin: 0 0 8px; font-weight: 600; }
+
+  .row { margin: 0 0 9px; }
+  .row-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .row-label { color: var(--text); font-size: 12px; }
+  .row-val { color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .row-hint { color: #6d6d78; font-size: 10.5px; margin-top: 2px; }
+
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 18px; background: transparent; margin: 2px 0 0;
+  }
+  input[type=range]::-webkit-slider-runnable-track { height: 2px; background: #34343c; border-radius: 2px; }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 12px; height: 12px; margin-top: -5px;
+    border-radius: 50%; background: var(--text); border: none; cursor: pointer;
+  }
+  input[type=color] { width: 100%; height: 24px; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: none; cursor: pointer; }
+  select, input[type=text], input[type=number] {
+    width: 100%; background: #101014; color: var(--text);
+    border: 1px solid var(--line); border-radius: 5px; padding: 5px 6px; font: inherit; font-size: 12px;
+  }
+  input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--accent); }
+
+  details.group { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; background: var(--panel-2); }
+  details.group > summary {
+    cursor: pointer; padding: 8px 10px; font-size: 11px; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--dim); font-weight: 600; user-select: none;
+  }
+  details.group[open] > summary { color: var(--text); border-bottom: 1px solid var(--line); }
+  .group-body { padding: 10px; }
+
+  /* вложенная группа редких ползунков внутри блока «Объём» */
+  details.fine { background: #101014; margin-top: 2px; }
+  details.fine > summary { font-size: 10px; letter-spacing: .07em; opacity: .8; padding: 6px 8px; }
+  details.fine .group-body { padding: 8px; }
+  .block-note { color: #6d6d78; font-size: 10.5px; line-height: 1.45; margin: -2px 0 9px; }
+
+  .primary { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; background: var(--panel-2); }
+
+  /* сегментированный выбор направления */
+  .row-buttons { margin-bottom: 12px; }
+  .row-buttons .row-label { display: block; margin-bottom: 6px; }
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .seg.seg-2 { grid-template-columns: repeat(2, 1fr); }
+  .seg-2 .seg-btn { padding: 7px 4px; }
+  .seg-cap-wide { font-size: 11px; letter-spacing: .02em; }
+  .seg-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 7px 2px 6px; background: #101014; color: var(--dim);
+    border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
+    font: inherit; line-height: 1;
+  }
+  .seg-btn:hover { background: #191920; color: var(--text); }
+  .seg-btn.on { background: var(--accent); border-color: var(--accent); color: #08080a; }
+  .seg-glyph { font-size: 15px; }
+  .seg-cap { font-size: 9px; letter-spacing: .01em; text-align: center; opacity: .85; }
+
+  details.more { background: transparent; }
+  details.more > summary { color: var(--text); }
+  details.more .group-body { padding: 8px; }
+  details.more details.group { background: #101014; }
+  .pos-note { color: var(--dim); font-size: 10.5px; line-height: 1.4; margin: 4px 0 10px; }
+  .pos-note b { color: var(--text); font-weight: 600; }
+
+  /* числовой ввод положения */
+  .row-vec { margin-bottom: 6px; }
+  .row-vec .row-label { display: block; margin-bottom: 6px; }
+  .vec { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .vec-cell { display: flex; align-items: center; gap: 5px; }
+  .vec-cap { color: var(--dim); font-size: 11px; width: 9px; flex: none; }
+  .vec-input {
+    width: 100%; min-width: 0; background: #101014; color: var(--text);
+    border: 1px solid var(--line); border-radius: 5px; padding: 4px 5px;
+    font: inherit; font-size: 12px; font-variant-numeric: tabular-nums;
+  }
+  .vec-input:focus { outline: none; border-color: var(--accent); }
+  .note { color: var(--warn); font-size: 10.5px; margin: 4px 0 10px; line-height: 1.4; }
+
+  .btn {
+    display: block; width: 100%; padding: 7px 8px; margin: 0 0 6px;
+    background: #23232a; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .btn:hover { background: #2c2c35; }
+  .btn.primary-btn { background: var(--accent); border-color: var(--accent); color: #08080a; font-weight: 600; }
+  .btn.primary-btn:hover { filter: brightness(1.08); }
+  .btn.ghost { background: transparent; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .grid2 .btn { margin: 0; }
+
+  #status { color: var(--dim); font-size: 11px; min-height: 15px; margin-top: 6px; }
+  #fatal {
+    position: fixed; inset: 0; background: #0c0c0e; color: #ff8b8b;
+    padding: 40px; font: 13px/1.6 ui-monospace, Menlo, monospace; white-space: pre-wrap;
+    display: none; z-index: 99; overflow: auto;
+  }
+  #drop {
+    position: fixed; inset: 0; background: rgba(12,12,14,.85); z-index: 50;
+    display: none; align-items: center; justify-content: center;
+    font-size: 16px; color: var(--text); border: 2px dashed var(--accent);
+  }
+  body.drop #drop { display: flex; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div id="wrap">
+      <canvas id="view"></canvas>
+      <div id="marker"></div>
+    </div>
+    <div id="stagehud">перетащите источник по кадру · колесо — высота Z · Shift+колесо — угол конуса</div>
+  </div>
+
+  <aside id="panel">
+    <h1>Фотон <span id="build"></span></h1>
+
+    <div class="block">
+      <h2>Пресет</h2>
+      <select id="presetSel"></select>
+      <div style="height:6px"></div>
+      <input type="text" id="presetName" spellcheck="false" placeholder="имя пресета">
+      <div class="row-hint">уходит и в имя файла, и внутрь JSON</div>
+      <div style="height:6px"></div>
+      <div class="grid2">
+        <button class="btn" id="savePreset">Сохранить JSON</button>
+        <button class="btn" id="resetBtn">Сброс</button>
+      </div>
+    </div>
+
+    <div id="controls"></div>
+
+    <div class="block">
+      <h2>Экспорт</h2>
+      <select id="sizeSel"></select>
+      <div style="height:6px"></div>
+      <div class="grid2">
+        <input type="number" id="cw" min="16" max="8192" step="1" value="1920">
+        <input type="number" id="ch" min="16" max="8192" step="1" value="1080">
+      </div>
+      <div style="height:8px"></div>
+      <button class="btn primary-btn" id="exportPng">Скачать PNG</button>
+      <button class="btn" id="exportJpg">Скачать JPG (0.95)</button>
+      <div class="note">
+        JPG: 8 бит и субдискретизация цветности рвут именно плавные тёмные градиенты —
+        то есть ведут себя хуже всего ровно на нашем типе картинки.
+        Для тёмных фиолетовых фонов не использовать.
+      </div>
+      <button class="btn" id="exportLayers">Выгрузить слои (3 PNG)</button>
+      <div class="note">
+        base кладётся вниз обычным режимом, light и haze — <b>сложением</b>
+        («Plus lighter» в Фигме, не Screen). Тогда стопка совпадает с обычным
+        PNG в точности.
+      </div>
+      <div id="status"></div>
+    </div>
+
+    <div class="block">
+      <h2>Видео</h2>
+      <div class="block-note">
+        Пишет то, что видно в превью, пока идёт оживление. Тумблер «Оживить»
+        живёт в блоке «Движение».
+      </div>
+      <div class="grid2">
+        <select id="vidSecs"></select>
+        <select id="vidFps"></select>
+      </div>
+      <div style="height:8px"></div>
+      <button class="btn primary-btn" id="recVideo">Записать</button>
+      <div class="note" id="vidNote"></div>
+    </div>
+  </aside>
+
+  <div id="drop">отпустите JSON-пресет</div>
+  <pre id="fatal"></pre>
+
+  <script>window.__PHOTON_ASSETS = {"shaders":{"accumulate.frag":"#version 300 es\nprecision highp float;\n\n/*\n  Временное накопление.\n\n  Марш дымки — это оценка интеграла по случайным точкам: джиттер сдвигает\n  выборку внутри шага, и ошибка выходит шумом, а не полосами. Но джиттер у нас\n  считался от координаты пикселя, то есть в каждом кадре был ОДИН И ТОТ ЖЕ, и\n  усреднять было нечего: сколько кадров ни рисуй, ошибка стоит на месте.\n\n  Стоит сдвигать джиттер по кадрам — и среднее по кадрам становится точнее\n  одного кадра. Полного 1/sqrt(N) здесь не выходит: джиттер один на весь луч,\n  а не свой на каждый шаг (так в базовом шейдере, и менять нельзя — на\n  побайтном совпадении с ним держится нейтральность вкладки), поэтому кадры\n  не независимы. По замеру выходит около полутора раз: 24 шага дают отклонение\n  0.27 деления за кадр и 0.19 за пять.\n\n  Накопление идёт по ЛИНЕЙНОМУ HDR, до bloom: иначе усреднялись бы уже сжатые\n  тональной кривой значения, и среднее вышло бы смещённым.\n\n  Ничего не перепроецируется: камера неподвижна, двигается только содержимое\n  среды, и двигается медленно. Поэтому хватает скользящего среднего с\n  ограниченной глубиной — при uAlpha 0.2 хвост живёт пять кадров, то есть\n  восьмую долю секунды, а кадр за это время меняется на сотые доли деления.\n*/\n\nin vec2 vUv;\nout vec4 fragColor;\n\nuniform sampler2D uCurrent;\nuniform sampler2D uHistory;\nuniform float uAlpha;   // 1 — история отбрасывается, меньше — копим\n\nvoid main() {\n  vec3 cur = texture(uCurrent, vUv).rgb;\n  vec3 his = texture(uHistory, vUv).rgb;\n  float a = clamp(uAlpha, 0.0, 1.0);\n  fragColor = vec4(mix(his, cur, a), 1.0);\n}\n","bloom_down.frag":"#version 300 es\nprecision highp float;\n\n// Даунсэмпл по Карису: 13 отсчётов, четыре группы по 4.\n// На первом уровне (uPrefilter == 1) включается порог с мягким коленом\n// и усреднение по обратной яркости — иначе одиночные яркие пиксели\n// дают фейерверки при апсэмпле.\n\nin vec2 vUv;\nout vec4 fragColor;\n\nuniform sampler2D uSrc;\nuniform vec2  uTexel;      // 1 / размер источника\nuniform int   uPrefilter;\nuniform float uThreshold;\nuniform float uKnee;\n\nfloat karisWeight(vec3 c) {\n  float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));\n  return 1.0 / (1.0 + luma);\n}\n\nvec3 fetch(vec2 uv) {\n  return texture(uSrc, uv).rgb;\n}\n\nvoid main() {\n  vec2 t = uTexel;\n  vec2 uv = vUv;\n\n  vec3 a = fetch(uv + t * vec2(-2.0,  2.0));\n  vec3 b = fetch(uv + t * vec2( 0.0,  2.0));\n  vec3 c = fetch(uv + t * vec2( 2.0,  2.0));\n  vec3 d = fetch(uv + t * vec2(-2.0,  0.0));\n  vec3 e = fetch(uv);\n  vec3 f = fetch(uv + t * vec2( 2.0,  0.0));\n  vec3 g = fetch(uv + t * vec2(-2.0, -2.0));\n  vec3 h = fetch(uv + t * vec2( 0.0, -2.0));\n  vec3 i = fetch(uv + t * vec2( 2.0, -2.0));\n  vec3 j = fetch(uv + t * vec2(-1.0,  1.0));\n  vec3 k = fetch(uv + t * vec2( 1.0,  1.0));\n  vec3 l = fetch(uv + t * vec2(-1.0, -1.0));\n  vec3 m = fetch(uv + t * vec2( 1.0, -1.0));\n\n  vec3 g0 = (j + k + l + m) * 0.25;\n  vec3 g1 = (a + b + d + e) * 0.25;\n  vec3 g2 = (b + c + e + f) * 0.25;\n  vec3 g3 = (d + e + g + h) * 0.25;\n  vec3 g4 = (e + f + h + i) * 0.25;\n\n  vec3 res;\n  if (uPrefilter == 1) {\n    float w0 = karisWeight(g0) * 0.5;\n    float w1 = karisWeight(g1) * 0.125;\n    float w2 = karisWeight(g2) * 0.125;\n    float w3 = karisWeight(g3) * 0.125;\n    float w4 = karisWeight(g4) * 0.125;\n    float wsum = w0 + w1 + w2 + w3 + w4;\n    res = (g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4) / max(wsum, 1e-5);\n\n    // мягкое колено\n    float luma = dot(res, vec3(0.2126, 0.7152, 0.0722));\n    float soft = clamp(luma - uThreshold + uKnee, 0.0, 2.0 * uKnee);\n    soft = soft * soft / max(4.0 * uKnee, 1e-4);\n    float contrib = max(soft, luma - uThreshold) / max(luma, 1e-5);\n    res *= contrib;\n  } else {\n    res = g0 * 0.5 + (g1 + g2 + g3 + g4) * 0.125;\n  }\n\n  fragColor = vec4(res, 1.0);\n}\n","bloom_up.frag":"#version 300 es\nprecision highp float;\n\n// Апсэмпл тентовым фильтром 3x3. Радиус задаётся В UV, а не в пикселях,\n// поэтому превью и экспорт в 4K дают одинаковую картинку.\n\nin vec2 vUv;\nout vec4 fragColor;\n\nuniform sampler2D uSrc;\nuniform float uRadius;   // в UV\n\nvoid main() {\n  float r = uRadius;\n  vec2 uv = vUv;\n\n  vec3 s = texture(uSrc, uv + vec2(-r,  r)).rgb * 1.0\n         + texture(uSrc, uv + vec2( 0.0, r)).rgb * 2.0\n         + texture(uSrc, uv + vec2( r,  r)).rgb * 1.0\n         + texture(uSrc, uv + vec2(-r,  0.0)).rgb * 2.0\n         + texture(uSrc, uv).rgb * 4.0\n         + texture(uSrc, uv + vec2( r,  0.0)).rgb * 2.0\n         + texture(uSrc, uv + vec2(-r, -r)).rgb * 1.0\n         + texture(uSrc, uv + vec2( 0.0,-r)).rgb * 2.0\n         + texture(uSrc, uv + vec2( r, -r)).rgb * 1.0;\n\n  fragColor = vec4(s / 16.0, 1.0);\n}\n","composite.frag":"#version 300 es\nprecision highp float;\n\n/*\n  Финальный проход. Порядок строгий:\n    bloom -> ACES (fitted) -> linear->sRGB (точный OETF) -> дизер -> зерно.\n  Дизер обязателен: тёмный градиент в 8 битах без него идёт кольцами.\n*/\n\nin vec2 vUv;\nout vec4 fragColor;\n\nuniform sampler2D uScene;\nuniform sampler2D uBloom;\nuniform float uBloomIntensity;\nuniform float uGrain;\nuniform vec2  uResolution;\nuniform float uGrainScale;   // привязка размера зерна к разрешению кадра\nuniform float uSeed;\nuniform int   uTonemap;      // 0 — выкл (послойная выгрузка света), 1 — ACES\nuniform float uSaturation;   // трим насыщенности после tonemap\n\n// ACES fitted, Stephen Hill\nconst mat3 ACESInput = mat3(\n  0.59719, 0.07600, 0.02840,\n  0.35458, 0.90834, 0.13383,\n  0.04823, 0.01566, 0.83777\n);\nconst mat3 ACESOutput = mat3(\n   1.60475, -0.10208, -0.00327,\n  -0.53108,  1.10813, -0.07276,\n  -0.07367, -0.00605,  1.07602\n);\n\nvec3 rrtOdtFit(vec3 v) {\n  vec3 a = v * (v + 0.0245786) - 0.000090537;\n  vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;\n  return a / b;\n}\n\nvec3 acesFitted(vec3 color) {\n  color = ACESInput * color;\n  color = rrtOdtFit(color);\n  color = ACESOutput * color;\n  return clamp(color, 0.0, 1.0);\n}\n\nvec3 linearToSrgb(vec3 c) {\n  c = clamp(c, 0.0, 1.0);\n  return mix(c * 12.92,\n             1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055,\n             step(vec3(0.0031308), c));\n}\n\nfloat hash(vec2 p) {\n  p = fract(p * vec2(443.8975, 397.2973));\n  p += dot(p, p.yx + 19.19);\n  return fract((p.x + p.y) * p.x);\n}\n\nvoid main() {\n  vec3 scene = texture(uScene, vUv).rgb;\n  vec3 bloom = texture(uBloom, vUv).rgb;\n  vec3 color = scene + bloom * uBloomIntensity;\n\n  if (uTonemap == 1) {\n    color = acesFitted(color);\n  } else {\n    color = clamp(color, 0.0, 1.0);\n  }\n\n  /*\n    Трим насыщенности — ПОСЛЕ tonemap, как в кинематографическом конвейере.\n\n    ACES по построению уводит яркое в белый: именно отсюда берётся выжженное\n    ядро с цветной периферией. Но та же кривая съедает цвет и в полутонах,\n    и на цветном фоне кадр выцветает раньше, чем хочется. Поднимать\n    насыщенность ДО tonemap бессмысленно — ACES съест ровно столько же.\n  */\n  if (abs(uSaturation - 1.0) > 0.001) {\n    float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));\n    // В светах трим гасится. Выжженное белое ядро — это результат экспозиции,\n    // и подкрашивать его нельзя: иначе вместо белого центра с цветной\n    // периферией получается сплошное цветное пятно.\n    float w = 1.0 - smoothstep(0.70, 1.0, luma);\n    color = clamp(mix(vec3(luma), color, mix(1.0, uSaturation, w)), 0.0, 1.0);\n  }\n\n  color = linearToSrgb(color);\n\n  // Треугольный дизер, независимый белый шум.\n  float r1 = hash(gl_FragCoord.xy + uSeed);\n  float r2 = hash(gl_FragCoord.xy + uSeed + 71.13);\n  color += (r1 - r2) / 255.0;\n\n  // Зерно — в масштабе, привязанном к разрешению кадра, а не к пикселю.\n  if (uGrain > 0.0) {\n    vec2 gp = vUv * uResolution / max(uGrainScale, 1e-3);\n    float n = hash(gp + uSeed) - 0.5;\n    color += n * uGrain;\n  }\n\n  fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);\n}\n","quad.vert":"#version 300 es\n// Полноэкранный треугольник без вершинных буферов.\nout vec2 vUv;\nvoid main() {\n  vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n  vUv = p;\n  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n}\n","volume.frag":"#version 300 es\nprecision highp float;\n\n/*\n  Проход режима «Объём». Отличается от photon.frag только тем, что среда здесь\n  перестаёт быть прозрачным серым наполнителем, а луч — идеально круглым.\n\n  Четыре добавления, каждое выключается в ноль и тогда кадр совпадает с\n  основным режимом бит в бит (проверено; см. PROGRESS):\n\n    1. Раскрытие клина. Конус получает эллиптическое сечение: угол поперёк\n       плоскости падения растягивается отдельно от угла вдоль неё. Круглый\n       конус на косом падении даёт эллипс, у которого край всюду одинаково\n       кривой; клин требует, чтобы луч расходился широко в одну сторону и\n       почти не расходился в другую.\n\n    2. Обратный лепесток фазовой функции. Один лепесток вперёд означает, что\n       среда светится только там, где луч идёт на камеру. Реальная дымка\n       отдаёт и назад — от этого объём читается со всех сторон, а не одной\n       яркой полосой.\n\n    3. Цветное затухание среды. Ослабление считается по каналам, а не одним\n       числом: среда съедает чужие каналы сильнее своих. Свет, прошедший\n       через неё, уходит в её цвет — и перестаёт быть чисто белым, то есть\n       сам становится тем, что можно красить.\n\n    4. Жалюзи. Свет режется заслонкой у самого прибора, и вместо одного\n       сплошного клина в объёме стоят отдельные лучи. Это и есть то, из чего\n       складывается «объёмный свет» на референсах: не яркость и не плотность\n       среды, а СТРУКТУРА — рисунок из светлых полос и тёмных промежутков\n       между ними. Заслонка модулирует свет в угловых координатах прибора,\n       поэтому лучи веером сходятся к нему, как и положено.\n\n    5. Затухание луча по пути от прибора. В основном режиме свет доходит до\n       точки без потерь, и объём выходит одинаково ярким на всю глубину.\n       Здесь путь источник → точка гасится тем же цветным ослаблением, и\n       дальний конец луча темнеет и набирает цвет среды. Это и есть то, что\n       ставит луч В пространство, а не поверх него.\n\n  Плюс оседание дымки — плотность меняется по высоте кадра. Камера\n  ортографическая и смотрит вдоль -Z, поэтому по лучу камеры высота\n  постоянна: замкнутая формула пропускания остаётся верной, просто своя на\n  каждый пиксель.\n\n  Бликов, ореолов и «зайчиков» по кадру здесь нет и не будет: всё свечение\n  делают дымка и bloom, ничего нарисованного поверх кадра не добавляется.\n\n  Выход — линейный HDR. Ни экспозиции, ни tonemap, ни гаммы здесь нет.\n*/\n\nin vec2 vUv;\nout vec4 fragColor;\n\n#define PI 3.14159265359\n#define TYPE_SPOT 0\n#define TYPE_POINT 1\n#define TYPE_DIRECTIONAL 2\n\n/*\n  Многократное рассеяние приближается суммой октав. Каждая следующая — тот же\n  однократный расчёт, но у света, отскочившего лишний раз: он проходит дальше\n  (ослабление слабее), приносит меньше (вклад меньше) и приходит уже не строго\n  оттуда, откуда светили (фаза ближе к изотропной).\n\n  Три коэффициента и три октавы — обычный набор; четвёртая даёт меньше, чем\n  стоит. Числа не выведены, а подобраны: это приближение, а не решение\n  уравнения переноса.\n*/\n#define MS_EXT  0.55\n#define MS_SCAT 0.60\n#define MS_G    0.50\n\n// режимы для послойной выгрузки\n#define MODE_FULL 0\n#define MODE_BASE 1\n#define MODE_LIGHT 2\n#define MODE_HAZE 3\n#define MODE_SPEC 4\n#define MODE_STACK 5   // подложка + прямой свет: промежуточная ступень для слоёв\n\nuniform vec2  uResolution;\nuniform float uPlaneScale;      // половина короткой стороны кадра в единицах сцены\nuniform int   uMode;\nuniform float uFrame;\n\n// --- источники ---------------------------------------------------------\nuniform vec3  uLightPos[2];\nuniform vec3  uLightDir[2];\nuniform vec3  uLightColor[2];   // линейный, уже с учётом насыщенности\nuniform float uLightGain[2];    // exp2(exposureEV), с учётом ограничения заливки\nuniform float uLightRadius[2];\nuniform float uConeHalf[2];     // половина угла конуса, радианы\nuniform float uConeSoft[2];     // рассеиватель: ширина полутени в долях полуугла\nuniform float uRange[2];\nuniform int   uLightType[2];\nuniform int   uLightCount;\n\n// --- поверхность -------------------------------------------------------\nuniform vec3  uAlbedo;\nuniform float uRoughness;\nuniform vec3  uNormal;\nuniform vec3  uAmbient;         // ambientColor * ambientLevel, линейный\n\n// --- среда -------------------------------------------------------------\nuniform float uHazeDensity;\nuniform float uHazeG;\nuniform float uHazeDepth;\nuniform int   uHazeSteps;\nuniform float uSourceGlow[2];\n\n// --- то, что добавляет режим «Объём» -----------------------------------\nuniform float uBeamAspect;      // 1 — круглый конус, >1 — веер поперёк, <1 — щель\nuniform float uHazeBack;        // доля обратного лепестка фазовой функции, 0 — нет\nuniform vec3  uMediumExt;       // ослабление по каналам, (1,1,1) — серая среда\nuniform float uBeamExtinct;     // насколько гаснет луч по пути от прибора, 0 — нет\nuniform float uFogSettle;       // оседание дымки по высоте кадра, 0 — однородна\nuniform float uGoboAmount;      // глубина заслонки, 0 — заслонки нет\nuniform float uGoboScale;       // сколько лучей укладывается в ширину пучка\nuniform float uGoboSharp;       // 0 — мягкая рябь, 1 — резаные лучи с тёмными промежутками\nuniform float uGoboOffset;      // сдвиг рисунка: чем ловить удачное расположение лучей\nuniform float uGoboNorm;        // 1/среднее маски: заслонка режет свет, но не гасит кадр\nuniform float uGoboBlur;        // насколько лучи размываются по ходу, 0 — резкие на всей длине\nuniform float uNoiseAmount;     // неоднородность среды, 0 — гладкая, как в базовом режиме\nuniform float uNoiseScale;      // размер клубов\nuniform float uNoiseDetail;     // вклад второй октавы\nuniform float uNoiseDrift;      // сдвиг поля: чем выбрать облако\nuniform int   uFloorOn;         // есть ли в сцене пол\nuniform vec3  uFloorNormal;     // нормаль пола\nuniform float uFloorY;          // линия горизонта: пол уходит вниз от c.y = -uFloorY\nuniform float uFloorBlend;      // ширина галтели между полом и стеной, 0 — жёсткий стык\nuniform int   uParticlesOn;     // взвесь в воздухе\nuniform float uParticleDensity; // сколько крупинок на единицу кадра\nuniform float uParticleSize;    // размер диска расфокуса\nuniform float uParticleGlow;    // яркость взвеси\nuniform float uTime;            // секунды; 0 — кадр застыл\nuniform float uAnimSpeed;       // скорость оживления, 0 — статика\nuniform float uMsAmount;        // многократное рассеяние, 0 — только однократное\nuniform int   uGoboPlane;       // 1 — заслонка стоит в сцене, 0 — задана углом у прибора\nuniform float uGoboDist;        // расстояние от прибора до заслонки\nuniform float uGoboAperture;    // половина окна в заслонке, в единицах сцены\n\n// --- кадр --------------------------------------------------------------\nuniform float uVignetteBoost;\n\n// -----------------------------------------------------------------------\n\n// Interleaved gradient noise (Jimenez). Спектр близок к синему, текстура не нужна.\nfloat ign(vec2 p) {\n  return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));\n}\n\nfloat hg(float cosA, float g) {\n  float g2 = g * g;\n  float den = 1.0 + g2 - 2.0 * g * cosA;\n  return (1.0 - g2) / (4.0 * PI * pow(max(den, 1e-4), 1.5));\n}\n\n/*\n  Фазовая функция с двумя лепестками.\n\n  Вперёд — тот же Хеньи—Гринштейн с ползунка анизотропии. Назад — фиксированный\n  g = −0.55: подбирать оба конца незачем, разница между «есть обратное свечение»\n  и «нет» видна и одним числом. При uHazeBack = 0 остаётся ровно то, что было.\n*/\nfloat phase(float cosA, float gScale) {\n  float f = hg(cosA, uHazeG * gScale);\n  if (uHazeBack <= 0.0001) return f;\n  return mix(f, hg(cosA, -0.55 * gScale), uHazeBack);\n}\n\n/*\n  Заслонка перед прибором.\n\n  Рисунок собирается тремя несоизмеримыми гармониками. Одна дала бы правильные\n  жалюзи с равным шагом — а нужен как раз неровный шаг: в жизни свет режут не\n  жалюзи, а всё подряд, и полосы выходят разной ширины и яркости. Отношения\n  1 : 1.73 : 0.61 не сокращаются, поэтому рисунок не повторяется на длине,\n  которую видно в кадре.\n\n  Резкость — степень. При uGoboSharp = 0 это мягкая рябь по клину, при 1 —\n  узкие лучи с настоящими тёмными промежутками. Ниже нуля маска не опускается:\n  заслонка гасит свет, а не выворачивает его.\n\n  Маска нормирована по среднему (uGoboNorm приходит из JS, там она считается\n  численно по этой же формуле). Без нормировки «Заслонка» и «Резкость» тихо\n  работали бы ещё и экспозицией: чем уже лучи, тем темнее кадр, и вместо выбора\n  рисунка человек каждый раз догоняет яркость. То же соображение, что у размера\n  искры в photon.frag: ползунок формы не должен трогать яркость.\n*/\nfloat goboMask(float x, float blur) {\n  float v = (sin(x) + 0.7 * sin(x * 1.73 + 1.1) + 0.5 * sin(x * 0.61 - 2.2)) / 2.2;\n  float m = clamp(0.5 + 0.5 * v, 0.0, 1.0);\n  m = pow(m, 1.0 + 7.0 * uGoboSharp) * uGoboNorm;   // среднее приведено к единице\n  /*\n    Размытие лучей по ходу.\n\n    Резкая на всей длине заслонка выдаёт себя сразу: у настоящих лучей край\n    расползается тем сильнее, чем дальше от прибора. Делает это не геометрия —\n    угловой размер источника от расстояния почти не зависит, — а сама среда:\n    свет, рассеявшийся дважды и трижды, приходит уже не из своего луча, и\n    рисунок постепенно затирается.\n\n    Считать многократное рассеяние честно здесь нечем и незачем. Его видимый\n    итог — потеря контраста рисунка с длиной пути, и именно она и берётся:\n    маска сводится к своему среднему, то есть к единице. Свет при этом никуда\n    не девается — размытие перекладывает его из лучей в промежутки, а не гасит.\n  */\n  return mix(1.0, m, exp(-0.5 * blur * blur));\n}\n\n/*\n  Неоднородная среда.\n\n  Гладкая дымка выдаёт себя тем, что она аналитическая: луч в ней ровный, как\n  заливка градиентом. В настоящем воздухе плотность гуляет, и внутри луча плывут\n  клубы — именно они читаются как «живой свет», а не яркость и не контраст.\n\n  Шум значений на решётке, две октавы, без текстур. Поле трёхмерное, но камера\n  ортографическая, поэтому вдоль луча камеры меняется только z — рисунок выходит\n  связным по глубине, а не мельтешащим по кадру.\n\n  Модуляция симметрична относительно единицы: среда местами гуще, местами реже,\n  а в среднем — ровно та же. Поэтому замкнутое пропускание до стены остаётся\n  верным как СРЕДНЕЕ, и обещание светлой темы не ломается. Клубы меняют вид\n  луча, а не общую яркость кадра.\n*/\nvec3 hash33(vec3 p) {\n  p = fract(p * vec3(0.1031, 0.1030, 0.0973));\n  p += dot(p, p.yxz + 33.33);\n  return fract((p.xxy + p.yxx) * p.zyx);\n}\n\nfloat hash13(vec3 p) {\n  p = fract(p * 0.1031);\n  p += dot(p, p.yzx + 33.33);\n  return fract((p.x + p.y) * p.z);\n}\n\nfloat vnoise(vec3 p) {\n  vec3 i = floor(p);\n  vec3 f = fract(p);\n  f = f * f * (3.0 - 2.0 * f);\n  float n000 = hash13(i + vec3(0.0, 0.0, 0.0));\n  float n100 = hash13(i + vec3(1.0, 0.0, 0.0));\n  float n010 = hash13(i + vec3(0.0, 1.0, 0.0));\n  float n110 = hash13(i + vec3(1.0, 1.0, 0.0));\n  float n001 = hash13(i + vec3(0.0, 0.0, 1.0));\n  float n101 = hash13(i + vec3(1.0, 0.0, 1.0));\n  float n011 = hash13(i + vec3(0.0, 1.0, 1.0));\n  float n111 = hash13(i + vec3(1.0, 1.0, 1.0));\n  return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),\n             mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);\n}\n\n// Множитель плотности в точке. Единица — среда как была.\nfloat mediumTexture(vec3 X) {\n  if (uNoiseAmount <= 0.0001) return 1.0;\n  // Клубы сносит тем же временем, но в другую сторону и медленнее заслонки:\n  // совпади скорости — рисунок ехал бы целиком, как обои, а не переливался.\n  /*\n    Клубы сносит тем же временем, но в другую сторону и с другой скоростью:\n    совпади скорости с заслонкой — рисунок ехал бы целиком, как обои.\n\n    Скорость привязана к размеру клубов, а не задана числом: клуб размером\n    1/uNoiseScale обязан проходить свой размер примерно за четыре секунды при\n    скорости 1, иначе крупные клубы кажутся неподвижными, а мелкие мельтешат.\n  */\n  float t = uTime * uAnimSpeed / max(uNoiseScale, 0.3);\n  vec3 p = X * uNoiseScale + vec3(uNoiseDrift + t * 0.26, -t * 0.17, t * 0.11);\n  float n = vnoise(p);\n  if (uNoiseDetail > 0.0001) {\n    // вторая октава берётся со сдвигом, иначе решётки совпадут и дадут сетку\n    n = mix(n, 0.5 * n + 0.5 * vnoise(p * 2.03 + 7.1), uNoiseDetail);\n  }\n  return max(1.0 + uNoiseAmount * (2.0 * n - 1.0), 0.0);\n}\n\n// Плотность дымки на высоте y. Ноль — среда однородна, как в основном режиме.\n// Центр кадра оставлен неподвижным, чтобы ползунок наклонял градиент, а не\n// менял заодно общую плотность.\nfloat fogAt(float y) {\n  return exp(-uFogSettle * y);\n}\n\n/*\n  Пропускание среды на пути от прибора до точки.\n\n  В основном режиме этого множителя нет вовсе: свет доходит куда угодно без\n  потерь. Здесь путь гасится тем же цветным ослаблением, что и путь до камеры,\n  поэтому дальний конец луча одновременно темнеет и уходит в цвет среды.\n\n  Плотность берётся на середине пути: вдоль этого отрезка высота меняется, и\n  считать её точно значило бы вести второй марш внутри первого.\n*/\nvec3 beamOpticalDepth(int i, vec3 X, float dist) {\n  if (uBeamExtinct <= 0.0001 || uHazeDensity <= 0.0001) return vec3(0.0);\n  float dens = uHazeDensity * fogAt(0.5 * (X.y + uLightPos[i].y));\n  return dens * 0.6 * uMediumExt * dist * uBeamExtinct;\n}\n\nvec3 beamTransmittance(int i, vec3 X, float dist) {\n  return exp(-beamOpticalDepth(i, X, dist));\n}\n\n// Затухание и конус — общий код для поверхности и для дымки.\n// Возвращает вектор на источник в Ldir, множитель яркости — в возврате.\nfloat lightFalloff(int i, vec3 X, out vec3 Ldir, out float dist) {\n  vec3 toL = uLightPos[i] - X;\n  dist = length(toL);\n  Ldir = toL / max(dist, 1e-6);\n\n  if (uLightType[i] == TYPE_DIRECTIONAL) {\n    Ldir = -uLightDir[i];\n    return 1.0;\n  }\n\n  float r = uLightRadius[i];\n  float atten = 1.0 / (dist * dist + r * r);\n\n  // мягкое окно дальности, чтобы «длина» имела конец\n  float w = clamp(1.0 - pow(dist / uRange[i], 4.0), 0.0, 1.0);\n  atten *= w * w;\n\n  if (uLightType[i] == TYPE_SPOT) {\n    /*\n      Профиль луча — обобщённый гауссов, exp(-ln2 * (theta/w)^(2n)), ровно как\n      в основном режиме. Разница одна: угол theta меряется не от оси, а по\n      эллипсу вокруг неё.\n\n      Рамка луча строится от стены, а не от камеры: R — поперёк плоскости\n      падения (горизонталь на стене), U — вдоль неё. Раскрытие делит угол\n      поперёк: при uBeamAspect > 1 луч расходится широко в стороны и остаётся\n      узким по ходу — на стене это и есть клин с прямыми краями. При 1 эллипс\n      вырождается в круг, и theta совпадает с прежним acos(dot(-Ldir, D)) до\n      последнего разряда.\n    */\n    vec3 D = uLightDir[i];\n    vec3 d = -Ldir;                       // от прибора к точке\n    vec3 R = cross(normalize(uNormal), D);\n    float rl = length(R);\n    R = rl > 1e-4 ? R / rl : vec3(1.0, 0.0, 0.0);\n    vec3 U = cross(D, R);\n\n    float tz     = dot(d, D);\n    float across = dot(d, R);             // поперёк плоскости падения\n    float along  = dot(d, U);             // вдоль неё\n\n    float asp = max(uBeamAspect, 0.05);\n    vec2 tp = vec2(across / asp, along);\n    // atan с двумя аргументами, а не acos: за спиной прибора tz уходит в\n    // минус, и угол обязан продолжаться за 90°, а не заворачиваться.\n    float theta = atan(length(tp), tz);\n\n    float w = max(uConeHalf[i] + atan(r / max(dist, 1e-3)), 1e-3);\n    float soft = clamp(uConeSoft[i], 0.0, 1.0);\n    float n = 1.0 + 5.0 * (1.0 - soft) * (1.0 - soft);\n    float x = max(theta / w, 1e-4);\n    atten *= exp(-0.693147 * pow(x, 2.0 * n));\n\n    if (uGoboAmount > 0.0001) {\n      /*\n        Заслонка едет временем: у неё уже есть ползунок сдвига, и оживление —\n        это он же, только сам.\n\n        Два движения, а не одно. Ровный снос — это конвейер: рисунок едет\n        целиком, и глаз читает не свет, а прокрутку. Поэтому поверх сноса\n        наложено качание с другим периодом: лучи то сходятся, то расходятся,\n        и это уже перелив.\n\n        Числа выставлены между двумя ошибками. Первая версия ехала на 0.055 —\n        сто четырнадцать секунд на один луч, то есть стояла. Вторая на 0.30 с\n        качанием 0.9 за семь секунд сливала три луча в один: это уже не перелив,\n        а перестройка рисунка. Осталось 0.15 и 0.55: за две секунды картина\n        сдвигается примерно на седьмую часть луча — видно, но структура держится.\n      */\n      float ta = uTime * uAnimSpeed;\n      float phase = uGoboOffset + ta * 0.15 + 0.55 * sin(ta * 0.60);\n\n      float coord = 0.0;\n      float blur = 0.0;\n      float open = 1.0;\n      bool beforePlane = false;\n\n      if (uGoboPlane == 1) {\n        /*\n          Заслонка стоит В СЦЕНЕ — плоскостью поперёк луча на расстоянии\n          uGoboDist от прибора.\n\n          Угловая заслонка не умеет главного: дать луч, который где-то\n          НАЧИНАЕТСЯ. Она режет свет прямо у лампы, и полосы тянутся от неё без\n          начала. Настоящее препятствие стоит на расстоянии, и до него свет идёт\n          целиком — отсюда то, чего не хватало: у прибора мягкое зарево, а\n          дальше оформленные лучи, начинающиеся от края окна.\n\n          Считается пересечением луча прибор → точка с плоскостью заслонки. Это\n          настоящая геометрия, а не рисунок: лучи расходятся из окна\n          перспективно, а на пол ложится тень той же формы.\n        */\n        float axial = dot(d, D) * dist;          // как далеко точка ушла вдоль оси\n        if (axial <= uGoboDist) {\n          beforePlane = true;                    // свет сюда ещё не резался\n        } else {\n          float t = uGoboDist / max(tz, 1e-4);   // до плоскости вдоль d\n          vec3 hit = uLightPos[i] + d * t;\n          vec3 Q = uLightPos[i] + D * uGoboDist;\n          float u = dot(hit - Q, R);\n          float v = dot(hit - Q, U);\n\n          // Окно: за его краем света нет вовсе. Край мягкий на десятую долю —\n          // у настоящего проёма он идеально резким и не бывает.\n          float A = max(uGoboAperture, 1e-3);\n          open = (1.0 - smoothstep(A * 0.9, A, abs(u)))\n               * (1.0 - smoothstep(A * 0.9, A, abs(v)));\n\n          // Шаг рисунка — в долях окна, чтобы «Сколько лучей» означало то же\n          // самое, что и у угловой заслонки.\n          coord = (u / A) * uGoboScale + phase;\n          // Размытие копится ПОСЛЕ заслонки, а не от лампы.\n          blur = uGoboBlur * (axial - uGoboDist) * uGoboScale * 0.1;\n        }\n      } else {\n        /*\n          Заслонка у прибора, задана углом. Координата — угол ПОПЕРЁК плоскости\n          падения, в долях полуугла конуса: у всех точек с одинаковым углом луч\n          идёт в одной плоскости через прибор, и на стене они складываются в\n          прямую через его проекцию. Отсюда веер, сходящийся к источнику.\n\n          Считается от сырого across, до деления на раскрытие клина: иначе\n          ползунок раскрытия втихую менял бы ещё и число лучей.\n        */\n        coord = atan(across, max(tz, 1e-4)) / max(uConeHalf[i], 1e-3) * uGoboScale + phase;\n        blur = uGoboBlur * dist * uGoboScale * 0.1;\n      }\n\n      if (!beforePlane) {\n        atten *= mix(1.0, goboMask(coord, blur) * open, uGoboAmount);\n      }\n    }\n  }\n  return atten;\n}\n\n/*\n  Взвесь в воздухе.\n\n  Не оверлей поверх кадра, а крупинки, физически стоящие в объёме. Каждая\n  освещается тем же lightFalloff, что стена и дымка, — со всем, что в него\n  входит, включая заслонку. Поэтому взвесь сама загорается внутри луча, гаснет\n  снаружи и подхватывает рисунок лучей: рисовать это отдельно не приходится.\n\n  Камера ортографическая, значит крупинка проецируется ровно в свои xy. Раскладка\n  — по решётке с хешированным сдвигом внутри ячейки: так они стоят неравномерно,\n  но не сваливаются в кучу и не требуют списка. Ячейка перебирается 3x3 вокруг\n  пикселя, поэтому радиус диска ограничен размером ячейки — иначе крупинка\n  обрезалась бы на границе перебора.\n\n  Расфокус отдельным ползунком не выведен: камера наведена на стену (в референсе\n  резкая именно она), и чем ближе крупинка к камере, тем сильнее размыта. Яркость\n  при этом делится на площадь диска — тот же свет, размазанный шире, обязан быть\n  тусклее. Без этого расфокус работал бы подсветкой.\n*/\nvec3 particleField(vec2 c, float zStart, vec3 sigma) {\n  if (uParticlesOn == 0 || uParticleGlow <= 0.0001) return vec3(0.0);\n\n  float cell = 1.0 / max(uParticleDensity, 0.05);\n  float zFar = max(uHazeDepth, 0.2);\n\n  /*\n    Оживление. Вся взвесь сносится одним медленным потоком, и вдобавок каждая\n    крупинка качается внутри своей ячейки со своей фазой. Решётка ищется в\n    сдвинутых координатах, а поток возвращается в мировую позицию — так дрейф\n    не рвётся на границах ячеек и не требует списка частиц.\n\n    «Переливаться от света» ничего специально не заставляют: крупинка\n    освещается тем же lightFalloff, поэтому, проплывая через луч и через\n    промежуток между лучами, она загорается и гаснет сама.\n  */\n  float t = uTime * uAnimSpeed;\n  // Кадр по короткой стороне — единица, так что 0.045/с проносит крупинку\n  // через него примерно за сорок секунд: заметно, но не мельтешит.\n  vec2 flow = vec2(t * 0.045, t * 0.018);\n  vec2 cg = c - flow;\n  vec2 gi = floor(cg / cell);\n\n  vec3 acc = vec3(0.0);\n  for (int oy = -1; oy <= 1; ++oy) {\n    for (int ox = -1; ox <= 1; ++ox) {\n      vec2 id = gi + vec2(float(ox), float(oy));\n      vec3 h1 = hash33(vec3(id, 11.0));\n      vec3 h2 = hash33(vec3(id, 27.0));\n\n      float ph = h2.z * 6.2832;\n      vec2 bob = cell * 0.13 * vec2(sin(t * 0.62 + ph), cos(t * 0.44 + ph * 1.7));\n      vec2 pxy = (id + h1.xy) * cell + flow + bob;\n      // глубина тоже дышит: крупинка то входит в фокус, то выходит из него\n      float pz = mix(0.06, zFar, clamp(h1.z + 0.06 * sin(t * 0.33 + ph), 0.0, 1.0));\n\n      // ближе к камере — крупнее и мягче; больше ячейки диску быть нельзя\n      float blur = 0.25 + 1.75 * (pz / zFar);\n      float r = min(uParticleSize * cell * blur * (0.45 + h2.x), cell * 0.78);\n      float d = length(c - pxy);\n      float disc = 1.0 - smoothstep(r * 0.72, r, d);\n      if (disc <= 0.0) continue;\n\n      vec3 X = vec3(pxy, pz);\n      vec3 lit = vec3(0.0);\n      for (int i = 0; i < 2; ++i) {\n        if (i >= uLightCount) break;\n        vec3 Ldir; float dist;\n        float atten = lightFalloff(i, X, Ldir, dist);\n        lit += uLightColor[i] * uLightGain[i] * atten * beamTransmittance(i, X, dist);\n      }\n      // перед крупинкой ещё столб среды\n      lit *= exp(-sigma * max(zStart - pz, 0.0));\n\n      /*\n        Деление на квадрат расфокуса — это сохранение потока: у крупинки его\n        столько же, сколько было, просто размазано по диску вчетверо большей\n        площади при вдвое большем радиусе. Без этого ползунок размера работал бы\n        подсветкой, а расфокус — вторым источником света.\n\n        Делим именно на blur, а не на r: r зависит ещё и от размера ячейки, и\n        тогда «Сколько частиц» втихую меняло бы яркость каждой.\n\n        Отсчёт — от самой резкой крупинки (blur = 0.25), а не от единицы. Иначе\n        деление на blur² не делит, а умножает: у резких множитель выходил\n        шестнадцатикратным, и вся взвесь светила как гирлянда.\n      */\n      float dim = blur / 0.25;\n      acc += lit * disc * uParticleGlow * (0.35 + h2.y) / (dim * dim);\n    }\n  }\n  return acc;\n}\n\nfloat distributionGGX(float NdotH, float a2) {\n  float den = NdotH * NdotH * (a2 - 1.0) + 1.0;\n  return a2 / (PI * den * den);\n}\n\n// Smith, height-correlated. Уже содержит 1/(4 NdotV NdotL).\nfloat visSmith(float NdotV, float NdotL, float a2) {\n  float lv = NdotL * sqrt(NdotV * NdotV * (1.0 - a2) + a2);\n  float ll = NdotV * sqrt(NdotL * NdotL * (1.0 - a2) + a2);\n  return 0.5 / max(lv + ll, 1e-5);\n}\n\nvoid main() {\n  // Пиксель -> точка на плоскости. Короткая сторона кадра = 1.0.\n  vec2 uv = vUv;\n  float aspect = uResolution.x / uResolution.y;\n  vec2 c = (uv - 0.5) * 2.0 * uPlaneScale;\n  if (aspect > 1.0) c.x *= aspect; else c.y /= aspect;\n\n  /*\n    Сцена — стена, а при включённом поле ещё и пол.\n\n    Камера ортографическая и смотрит вдоль −Z, поэтому луч пикселя это прямая\n    (c.x, c.y, z) с постоянными x и y. Пересекаем её с обеими плоскостями и\n    берём ту, что БЛИЖЕ к камере, то есть с бОльшим z. Линия, где два корня\n    сравниваются, и есть горизонт — её не приходится рисовать отдельно, она\n    получается сама.\n\n    Пол — не градиент внизу кадра, а настоящая вторая поверхность со своей\n    нормалью. От этого у него свой Ламберт, свой блик и свой спад: свет ложится\n    на него лужей и уходит в глубину. Ровно этого не хватало, чтобы кадр читался\n    как пространство, а не как подсвеченный задник.\n  */\n  vec3 N = normalize(uNormal);\n  float pz = -(N.x * c.x + N.y * c.y) / max(N.z, 0.25);\n\n  if (uFloorOn == 1) {\n    vec3 Nf = normalize(uFloorNormal);\n    // плоскость проходит через (0, -uFloorY, 0): горизонт ложится на c.y = -uFloorY\n    float zf = (-Nf.y * uFloorY - Nf.x * c.x - Nf.y * c.y) / max(Nf.z, 0.05);\n    /*\n      Стык не жёсткий, а с галтелью — как в циклораме, где пол переходит в\n      задник скруглением, а не углом. Жёсткий выбор ближней плоскости даёт на\n      горизонте разрыв нормали, и он читается как склейка двух картинок: линия\n      видна ровно там, где в кадре её быть не должно.\n\n      Честного скругления здесь нет — смешиваются глубина и нормаль, а не\n      строится поверхность. Но видно именно нормаль: она решает и Ламберт, и\n      блик, и спад, поэтому переход выходит тем самым мягким загибом.\n    */\n    float b = max(uFloorBlend, 1e-4);\n    float w = smoothstep(-b, b, zf - pz);\n    pz = mix(pz, zf, w);\n    N = normalize(mix(N, Nf, w));\n  }\n\n  vec3 P = vec3(c.x, c.y, pz);\n\n  vec3 V = vec3(0.0, 0.0, 1.0);\n  float NdotV = max(dot(N, V), 1e-4);\n\n  float a  = uRoughness * uRoughness;\n  float a2 = max(a * a, 1e-6);\n\n  // Плотность дымки на этом пикселе. По лучу камеры она постоянна: камера\n  // ортографическая, высота вдоль -Z не меняется.\n  float dens = uHazeDensity * fogAt(c.y);\n\n  vec3 diffuseSum = vec3(0.0);\n  vec3 specSum    = vec3(0.0);\n\n  for (int i = 0; i < 2; ++i) {\n    if (i >= uLightCount) break;\n\n    vec3 Ldir; float dist;\n    float atten = lightFalloff(i, P, Ldir, dist);\n    vec3 radiance = uLightColor[i] * uLightGain[i] * atten * beamTransmittance(i, P, dist);\n\n    float NdotL = max(dot(N, Ldir), 0.0);\n    if (NdotL <= 0.0) continue;\n\n    // 4.4 Ламберт\n    diffuseSum += uAlbedo / PI * NdotL * radiance;\n\n    // 4.5 GGX, V постоянен\n    vec3 H = normalize(Ldir + V);\n    float NdotH = max(dot(N, H), 0.0);\n    float VdotH = max(dot(V, H), 0.0);\n    float D  = distributionGGX(NdotH, a2);\n    float Vs = visSmith(NdotV, NdotL, a2);\n    vec3  F  = vec3(0.04) + (vec3(1.0) - vec3(0.04)) * pow(1.0 - VdotH, 5.0);\n    specSum += D * Vs * F * NdotL * radiance;\n  }\n\n  vec3 ambient = uAlbedo * uAmbient;\n\n  // --- 4.6 дымка ------------------------------------------------------\n  vec3 haze = vec3(0.0);\n  vec3 surfaceTransmittance = vec3(1.0);\n\n  if (uHazeDensity > 0.0001) {\n    float zStart = uHazeDepth;\n    float zEnd   = P.z;\n    float span   = max(zStart - zEnd, 0.0);\n    float steps  = float(uHazeSteps);\n    float dz     = span / steps;\n\n    // Ослабление держим заметно ниже рассеяния: среда в основном рассеивает\n    // вперёд, а не поглощает. Иначе верхняя половина ползунка плотности просто\n    // гасит кадр и пользоваться ей нельзя. Цвет среды входит сюда множителем\n    // по каналам: серая среда — (1,1,1) и всё как было.\n    vec3 sigma = dens * 0.6 * uMediumExt;\n    /*\n      Джиттер сдвигается по кадрам вращением Крэнли—Паттерсона: к синему шуму\n      по кадру прибавляется золотое сечение и берётся дробная часть. Спектр по\n      экрану остаётся синим (полос нет), а по времени последовательность\n      раскладывается равномерно — именно это и позволяет усреднять кадры.\n\n      При uFrame = 0 выражение сводится к прежнему ign: базовый режим и\n      экспорт считаются ровно как раньше.\n    */\n    float jitter = fract(ign(gl_FragCoord.xy) + uFrame * 0.61803398875);\n\n    // Среда однородна вдоль луча камеры, поэтому пропускание до поверхности\n    // берётся в замкнутом виде — и одинаково работает во всех режимах,\n    // включая послойную выгрузку.\n    surfaceTransmittance = exp(-sigma * span);\n\n    vec3 acc = vec3(0.0);\n    vec3 tau = vec3(0.0);\n\n    // рассеяние считаем только там, где оно попадёт в кадр\n    if (uMode == MODE_FULL || uMode == MODE_HAZE) {\n      for (int s = 0; s < 256; ++s) {\n        if (s >= uHazeSteps) break;\n        float t = (float(s) + jitter) * dz;\n        vec3 X = vec3(c.x, c.y, zStart - t);\n        // Клубы: плотность в этой точке отличается от средней. Множитель общий\n        // для обоих источников — это свойство среды, а не света.\n        float dn = dens * mediumTexture(X);\n\n        /*\n          Геометрия луча и заслонка от октавы не зависят: где прибор, куда\n          светит, попала точка в луч или в промежуток — одно и то же для света,\n          отскочившего один раз и три. Поэтому lightFalloff считается ОДИН раз\n          на источник, а по октавам идут только фаза и пропускание. Три октавы\n          из-за этого стоят далеко не втрое дороже одной.\n        */\n        vec3 ms0 = vec3(0.0), ms1 = vec3(0.0), ms2 = vec3(0.0);\n        bool multi = uMsAmount > 0.0001;\n        for (int i = 0; i < 2; ++i) {\n          if (i >= uLightCount) break;\n          vec3 Ldir; float dist;\n          float atten = lightFalloff(i, X, Ldir, dist);\n          // Рассеяние: падающее направление -Ldir, к камере уходит +Z.\n          float cosA = dot(-Ldir, vec3(0.0, 0.0, 1.0));\n          vec3 base = uLightColor[i] * uLightGain[i] * atten;\n          vec3 tauB = beamOpticalDepth(i, X, dist);\n          ms0 += base * phase(cosA, 1.0) * exp(-tauB);\n          if (multi) {\n            ms1 += base * phase(cosA, MS_G)         * exp(-tauB * MS_EXT);\n            ms2 += base * phase(cosA, MS_G * MS_G)  * exp(-tauB * MS_EXT * MS_EXT);\n          }\n        }\n\n        float step = dn * dz;\n        acc += ms0 * step * exp(-tau);\n        if (multi) {\n          // Пропускание по лучу камеры для отскочившего света тоже слабее —\n          // отсюда широкий ореол вокруг луча и подсветка в тёмных промежутках\n          // между лучами. Однократное рассеяние их дать не может в принципе.\n          acc += ms1 * step * exp(-tau * MS_EXT) * (uMsAmount * MS_SCAT);\n          acc += ms2 * step * exp(-tau * MS_EXT * MS_EXT) * (uMsAmount * MS_SCAT * MS_SCAT);\n        }\n\n        // Оптическая глубина копится по той же неоднородной плотности: за\n        // плотным клубом дальше по лучу заметно темнее, и клубы получают объём\n        // вместо равномерной ряби. Держим именно глубину, а не пропускание:\n        // октавам нужна одна и та же величина в разных степенях.\n        tau += sigma * (dn / max(dens, 1e-5)) * dz;\n      }\n    }\n    haze = acc;\n  }\n\n  /*\n    Свечение самой среды.\n\n    Пропускание exp(-sigma*L) гасит подложку, но взамен среда светится сама:\n    она рассеивает в камеру тот же общий свет, который освещает стену. Для\n    однородного объёма это ровно ambient * (1 - T), и в сумме с ослабленной\n    подложкой снова получается ambient — дымка перестаёт тихо гасить фон.\n\n    На тёмной теме слагаемое равно нулю (ambient там ноль) и ничего не меняет.\n    На светлой без него кадр мутнеет с ростом плотности, и обещание «фон в\n    точности равен цвету темы» перестаёт выполняться. С цветной средой то же\n    равенство держится по каждому каналу отдельно.\n  */\n  vec3 airlight = ambient * (vec3(1.0) - surfaceTransmittance);\n\n  // --- собственное свечение источника ---------------------------------\n  // Источник физически стоит в кадре; при sourceGlow > 0 он виден напрямую.\n  vec3 glow = vec3(0.0);\n  if (uMode != MODE_BASE && uMode != MODE_SPEC && uMode != MODE_STACK) {\n    // Взвесь — та же среда, поэтому уходит в тот же слой, что дымка и искра:\n    // при послойной выгрузке она попадает в haze и стопка сходится как прежде.\n    glow += particleField(c, uHazeDepth, uHazeDensity * fogAt(c.y) * 0.6 * uMediumExt);\n    for (int i = 0; i < 2; ++i) {\n      if (i >= uLightCount) break;\n      if (uLightType[i] == TYPE_DIRECTIONAL) continue;\n      if (uSourceGlow[i] <= 0.0001) continue;\n      /*\n        Собственное свечение источника — искра, которую видно напрямую.\n        При ортокамере источник проецируется ровно в свои xy.\n\n        Это ИЗЛУЧЕНИЕ, а не освещение, поэтому оно намеренно не зависит ни\n        от exposureEV источника, ни от ограничения «заливка слабее главного\n        на 1,5 стопа».\n\n        Радиус задаёт размер искры, но не её яркость: пик нормирован. Ореол\n        вокруг искры делают дымка и bloom, а не нарисованное пятно.\n      */\n      float r = max(uLightRadius[i], 1e-3);\n      float d2 = dot(c - uLightPos[i].xy, c - uLightPos[i].xy);\n      float disc = r * r / (d2 + r * r);\n      glow += uLightColor[i] * uSourceGlow[i] * 8.0 * disc * disc;\n    }\n  }\n\n  // --- 4.9 виньетка ---------------------------------------------------\n  // Не оверлей от центра кадра: центр берётся из проекции источника на плоскость,\n  // а форма — та же, что у обратного квадрата. Ползунок только усиливает спад.\n  float vig = 1.0;\n  if (uVignetteBoost > 0.0001) {\n    vec3 Q = uLightPos[0] - N * dot(N, uLightPos[0]);\n    float r = length(P - Q);\n    float k = max(uRange[0], 0.25);\n    float falloff = 1.0 / (1.0 + (r / k) * (r / k));\n    vig = mix(1.0, falloff, uVignetteBoost);\n  }\n\n  vec3 base = ambient * surfaceTransmittance + airlight;\n  vec3 lit  = (diffuseSum + specSum) * surfaceTransmittance * vig;\n  vec3 air  = (haze + glow) * vig;\n\n  vec3 color;\n  if (uMode == MODE_BASE) {\n    color = base;\n  } else if (uMode == MODE_LIGHT) {\n    color = lit;\n  } else if (uMode == MODE_HAZE) {\n    color = air;\n  } else if (uMode == MODE_SPEC) {\n    color = specSum * surfaceTransmittance * vig;\n  } else if (uMode == MODE_STACK) {\n    // Ступень для послойной выгрузки: всё, кроме среды. Слои считаются\n    // разностями таких ступеней уже после tonemap — см. export/layers.js.\n    color = base + lit;\n  } else {\n    color = base + lit + air;\n  }\n\n  fragColor = vec4(max(color, vec3(0.0)), 1.0);\n}\n"},"presets":{"direction-bottom-center":{"version":2,"name":"direction-bottom-center","params":{"theme":"dark","azimuth":180,"grazing":0.975,"coneAngle":12,"coneSoftness":0.27,"lightZ":0.14,"hazeDensity":0.16,"exposureEV":4.1,"saturation":1.8,"lightColor":"#FFFFFF","albedo":"#010D3C","lightX":0,"lightY":-1.23,"lightType":"spot","radius":0.041,"range":1.95,"lightSaturation":1.61,"roughness":0.8,"ambientLevel":0.08,"ambientColor":"#FFFFFF","hazeAnisotropy":0.49,"hazeDepth":2.95,"sourceGlow":0,"bloomIntensity":0.23,"bloomThreshold":0.07,"bloomRadius":0.55,"grainAmount":0.0065,"vignetteBoost":0.335,"fillEnabled":true,"fill":{"lightType":"point","lightZ":0.8,"radius":0.001,"coneAngle":4,"grazing":0,"lightColor":"#FFFFFF","lightSaturation":1.7,"sourceGlow":0,"lightX":-0.07,"lightY":-0.63,"azimuth":180,"coneSoftness":0.09,"range":1.55,"exposureEV":-3.5},"seed":17}},"direction-bottom-left":{"version":2,"name":"direction-bottom-left","params":{"theme":"dark","azimuth":151,"grazing":0.83,"coneAngle":15.5,"coneSoftness":0.4,"lightZ":0.33,"hazeDensity":0.245,"exposureEV":3.55,"saturation":2,"lightColor":"#FFFFFF","albedo":"#010D3C","lightX":-0.89,"lightY":-1.29,"lightType":"spot","radius":0.097,"range":3.65,"lightSaturation":1.59,"roughness":0.71,"ambientLevel":0.06,"ambientColor":"#FFFFFF","hazeAnisotropy":0.49,"hazeDepth":2.95,"sourceGlow":0,"bloomIntensity":0.2,"bloomThreshold":0.05,"bloomRadius":0.26,"grainAmount":0.0065,"vignetteBoost":0.17,"fillEnabled":true,"fill":{"lightType":"point","lightZ":0.8,"radius":0.001,"coneAngle":4,"grazing":0,"lightColor":"#FFFFFF","lightSaturation":1.7,"sourceGlow":0,"lightX":-0.51,"lightY":-0.63,"azimuth":180,"coneSoftness":0,"range":0.8,"exposureEV":-2.75},"seed":17}},"direction-bottom-right":{"version":2,"name":"direction-bottom-right","params":{"theme":"dark","azimuth":-144,"grazing":0.93,"coneAngle":12,"coneSoftness":0.78,"lightZ":0.32,"hazeDensity":0.28,"exposureEV":3.55,"saturation":2,"lightColor":"#FFFFFF","albedo":"#010D3C","lightX":0.9,"lightY":-1.32,"lightType":"spot","radius":0.093,"range":5.5,"lightSaturation":1.59,"roughness":0.8,"ambientLevel":0.06,"ambientColor":"#FFFFFF","hazeAnisotropy":0.49,"hazeDepth":2.95,"sourceGlow":0,"bloomIntensity":0.23,"bloomThreshold":0.07,"bloomRadius":0.55,"grainAmount":0.0065,"vignetteBoost":0.335,"fillEnabled":true,"fill":{"lightType":"point","lightZ":0.8,"radius":0.001,"coneAngle":4,"grazing":0,"lightColor":"#FFFFFF","lightSaturation":1.7,"sourceGlow":0,"lightX":0.31,"lightY":-0.64,"azimuth":-144,"coneSoftness":0.1,"range":0.8,"exposureEV":-3.45},"seed":17}},"direction-top-center":{"version":2,"name":"direction-top-center","params":{"theme":"dark","azimuth":0,"grazing":0.905,"coneAngle":14,"coneSoftness":0.71,"lightZ":0.39,"hazeDensity":0.305,"exposureEV":3.55,"saturation":2,"lightColor":"#FFFFFF","albedo":"#010D3C","lightX":0,"lightY":1.39,"lightType":"spot","radius":0.097,"range":2.4,"lightSaturation":1.59,"roughness":0.8,"ambientLevel":0.08,"ambientColor":"#FFFFFF","hazeAnisotropy":0.49,"hazeDepth":2.95,"sourceGlow":0,"bloomIntensity":0.23,"bloomThreshold":0.07,"bloomRadius":0.55,"grainAmount":0.0065,"vignetteBoost":0.335,"fillEnabled":true,"fill":{"lightType":"point","lightZ":0.8,"radius":0.001,"coneAngle":4,"grazing":0,"lightColor":"#FFFFFF","lightSaturation":1.7,"sourceGlow":0,"lightX":0,"lightY":0.67,"azimuth":0,"coneSoftness":0.12,"range":0.8,"exposureEV":-3.45},"seed":17}},"direction-top-left":{"version":2,"name":"direction-top-left","params":{"theme":"dark","azimuth":27,"grazing":0.93,"coneAngle":12,"coneSoftness":0.78,"lightZ":0.43,"hazeDensity":0.28,"exposureEV":3.55,"saturation":2,"lightColor":"#FFFFFF","albedo":"#010D3C","lightX":-0.88,"lightY":1.32,"lightType":"spot","radius":0.097,"range":2.85,"lightSaturation":1.59,"roughness":0.8,"ambientLevel":0.06,"ambientColor":"#FFFFFF","hazeAnisotropy":0.49,"hazeDepth":2.95,"sourceGlow":0,"bloomIntensity":0.23,"bloomThreshold":0.07,"bloomRadius":0.55,"grainAmount":0.0065,"vignetteBoost":0.335,"fillEnabled":true,"fill":{"lightType":"point","lightZ":0.8,"radius":0.001,"coneAngle":4,"grazing":0,"lightColor":"#FFFFFF","lightSaturation":1.7,"sourceGlow":0,"lightX":-0.5,"lightY":0.63,"azimuth":-180,"coneSoftness":0.1,"range":0.8,"exposureEV":-3.45},"seed":17}},"direction-top-right":{"version":2,"name":"direction-top-right","params":{"theme":"dark","azimuth":-27,"grazing":0.93,"coneAngle":12,"coneSoftness":0.78,"lightZ":0.43,"hazeDensity":0.28,"exposureEV":3.55,"saturation":2,"lightColor":"#FFFFFF","albedo":"#010D3C","lightX":0.88,"lightY":1.32,"lightType":"spot","radius":0.097,"range":2.85,"lightSaturation":1.59,"roughness":0.8,"ambientLevel":0.06,"ambientColor":"#FFFFFF","hazeAnisotropy":0.49,"hazeDepth":2.95,"sourceGlow":0,"bloomIntensity":0.23,"bloomThreshold":0.07,"bloomRadius":0.55,"grainAmount":0.0065,"vignetteBoost":0.335,"fillEnabled":true,"fill":{"lightType":"point","lightZ":0.8,"radius":0.001,"coneAngle":4,"grazing":0,"lightColor":"#FFFFFF","lightSaturation":1.7,"sourceGlow":0,"lightX":0.5,"lightY":0.63,"azimuth":180,"coneSoftness":0.1,"range":0.8,"exposureEV":-3.45},"seed":17}},"firefly":{"version":2,"name":"firefly","params":{"theme":"dark","azimuth":-45,"grazing":0.45,"coneAngle":80,"coneSoftness":1,"lightZ":1.2,"hazeDensity":0.18,"exposureEV":-0.4,"saturation":1.35,"lightColor":"#8FB4FF","albedo":"#05070E","lightX":0.75,"lightY":0.55,"lightType":"spot","radius":0.4,"range":4.5,"lightSaturation":1,"roughness":0.95,"ambientLevel":0.003,"ambientColor":"#2A4A8C","hazeAnisotropy":0.35,"hazeDepth":2.6,"sourceGlow":0,"bloomIntensity":0.6,"bloomThreshold":0.7,"bloomRadius":0.8,"grainAmount":0.01,"vignetteBoost":0.3,"fillEnabled":true,"fill":{"azimuth":-45,"lightX":0.3,"lightY":0.1,"lightZ":0.55,"lightType":"point","grazing":0.5,"radius":0.012,"coneAngle":90,"coneSoftness":1,"range":2.2,"exposureEV":-1.9,"lightColor":"#DCEBFF","lightSaturation":1,"sourceGlow":0.55},"seed":17}},"volume-rays":{"version":2,"name":"volume-rays","params":{"theme":"dark","azimuth":18,"grazing":0.62,"coneAngle":11,"coneSoftness":0.55,"lightZ":1.1,"hazeDensity":0.3,"exposureEV":6.4,"saturation":1.1,"lightColor":"#FFEBD4","albedo":"#15161C","lightX":-0.62,"lightY":1.3,"lightType":"spot","radius":0.1,"range":6.5,"lightSaturation":1,"roughness":0.85,"ambientLevel":0.05,"ambientColor":"#8FA0C0","beamSpread":-0.35,"hazeBackscatter":0.3,"mediumColor":"#C8B69B","mediumTint":1.4,"beamExtinct":1.5,"goboAmount":0.7,"goboScale":3,"goboSharp":0.6,"goboBlur":0.5,"goboOffset":2.4,"fogSettle":-0.2,"noiseAmount":0.6,"noiseScale":1.6,"floorOn":true,"floorY":0.18,"floorBlend":0.22,"floorTilt":58,"hazeAnisotropy":0.62,"hazeDepth":3.2,"sourceGlow":0,"bloomIntensity":0.4,"bloomThreshold":0.07,"bloomRadius":0.7,"grainAmount":0.006,"vignetteBoost":0.45,"fillEnabled":false,"fill":{"lightX":-0.5,"lightY":0.63,"lightZ":0.8,"lightType":"point","azimuth":-180,"grazing":0,"radius":0.001,"coneAngle":4,"coneSoftness":0.1,"range":0.8,"exposureEV":-3.45,"lightColor":"#FFFFFF","lightSaturation":1.7,"sourceGlow":0},"seed":17,"particlesOn":true,"particleDensity":18,"particleSize":0.28,"particleGlow":0.08,"animate":true,"animSpeed":1,"msAmount":0.5}},"volume-wedge":{"version":2,"name":"volume-wedge","params":{"theme":"dark","azimuth":52,"grazing":0.95,"coneAngle":26,"coneSoftness":0.35,"lightZ":0.35,"hazeDensity":0.34,"exposureEV":6.6,"saturation":1.15,"lightColor":"#FFFFFF","albedo":"#0E1E52","lightX":-1.15,"lightY":1.15,"lightType":"spot","radius":0.12,"range":7.5,"lightSaturation":1.59,"roughness":0.8,"ambientLevel":0.06,"ambientColor":"#7C90D8","beamSpread":-0.6,"hazeBackscatter":0.28,"mediumColor":"#5A86E0","mediumTint":1.6,"beamExtinct":1.1,"fogSettle":-0.3,"hazeAnisotropy":0.55,"hazeDepth":3.4,"sourceGlow":0,"bloomIntensity":0.34,"bloomThreshold":0.07,"bloomRadius":0.6,"grainAmount":0.0065,"vignetteBoost":0.55,"fillEnabled":false,"fill":{"lightX":-0.5,"lightY":0.63,"lightZ":0.8,"lightType":"point","azimuth":-180,"grazing":0,"radius":0.001,"coneAngle":4,"coneSoftness":0.1,"range":0.8,"exposureEV":-3.45,"lightColor":"#FFFFFF","lightSaturation":1.7,"sourceGlow":0},"seed":17}},"volume-window":{"version":2,"name":"volume-window","params":{"theme":"dark","azimuth":18,"grazing":0.62,"coneAngle":26,"coneSoftness":0.55,"lightZ":1.1,"hazeDensity":0.3,"exposureEV":6.4,"saturation":1.1,"lightColor":"#FFEBD4","albedo":"#15161C","lightX":-0.62,"lightY":1.3,"lightType":"spot","radius":0.1,"range":6.5,"lightSaturation":1,"roughness":0.85,"ambientLevel":0.05,"ambientColor":"#8FA0C0","beamSpread":-0.35,"hazeBackscatter":0.3,"mediumColor":"#C8B69B","mediumTint":1.4,"beamExtinct":1.5,"goboAmount":1,"goboScale":3,"goboSharp":0.45,"goboBlur":0.25,"goboOffset":2.4,"fogSettle":-0.2,"noiseAmount":0.6,"noiseScale":1.6,"floorOn":true,"floorY":0.18,"floorBlend":0.22,"floorTilt":58,"hazeAnisotropy":0.62,"hazeDepth":3.2,"sourceGlow":0,"bloomIntensity":0.4,"bloomThreshold":0.07,"bloomRadius":0.7,"grainAmount":0.006,"vignetteBoost":0.45,"fillEnabled":false,"fill":{"lightX":-0.5,"lightY":0.63,"lightZ":0.8,"lightType":"point","azimuth":-180,"grazing":0,"radius":0.001,"coneAngle":4,"coneSoftness":0.1,"range":0.8,"exposureEV":-3.45,"lightColor":"#FFFFFF","lightSaturation":1.7,"sourceGlow":0},"seed":17,"particlesOn":true,"particleDensity":18,"particleSize":0.28,"particleGlow":0.06,"animate":true,"animSpeed":1,"msAmount":0.5,"goboPlane":true,"goboDist":0.45,"goboAperture":0.16}}},"build":"08.09.2026"};</script>
+  <script>
+(function () {
+'use strict';
+
+/* ===== src/ui/schema.js ===== */
+// Единый список параметров. Из него генерируется панель и в него же
+// сериализуется JSON-пресет. Другого источника правды нет.
+
+const SCHEMA_VERSION = 2;
+
+// Шесть направлений света — те же, что в гайде по съёмке. Это не отдельный
+// параметр, а ПРЕСЕТЫ на непрерывной оси `azimuth`: кнопка ставит поворот в
+// круглое значение и переносит источник на типовое место, дальше поворот
+// крутится плавно. Насколько полого луч идёт вдоль стены — `grazing`.
+//
+// Кнопка переносит ОБА источника: второй тоже отражается, иначе при смене
+// направления он оставался бы на месте и разваливал расстановку.
+// Позиции — ЗА кадром: короткая сторона это ±0.5, так что источник стоит
+// заметно снаружи. Внутри кадра он даёт круглое ядро вокруг своей проекции
+// (спад 1/d² и косинус радиальны), и это ядро читается как форма светильника.
+// Снаружи в кадр попадает только вытянутый хвост.
+// Поворот у каждого направления — «в центр кадра» из своей позиции.
+const DIRECTIONS = [
+  { id: 'top-left',      label: 'Сверху слева',   short: '↘', az:   27, pos: [-0.88,  1.32], fillPos: [-0.5,  0.63] },
+  { id: 'top-center',    label: 'Сверху',         short: '↓', az:    0, pos: [ 0.00,  1.39], fillPos: [ 0.0,  0.67] },
+  { id: 'top-right',     label: 'Сверху справа',  short: '↙', az:  -27, pos: [ 0.88,  1.32], fillPos: [ 0.5,  0.63] },
+  { id: 'bottom-left',   label: 'Снизу слева',    short: '↗', az:  151, pos: [-0.89, -1.29], fillPos: [-0.51, -0.63] },
+  { id: 'bottom-center', label: 'Снизу',          short: '↑', az:  180, pos: [ 0.00, -1.23], fillPos: [-0.07, -0.63] },
+  { id: 'bottom-right',  label: 'Снизу справа',   short: '↖', az: -144, pos: [ 0.90, -1.32], fillPos: [ 0.31, -0.64] },
+];
+
+// Раскрытие клина ползунком ходит по −1…1, а в шейдер уезжает множителем
+// угла: 0 — круг, +1 — вчетверо шире поперёк, −1 — вчетверо уже. Геометрическая
+// шкала здесь единственно правильная — «в два раза шире» и «в два раза уже»
+// обязаны быть симметричны относительно середины.
+function beamAspect(spread) {
+  return Math.pow(4, spread);
+}
+
+function directionByAz(az) {
+  return DIRECTIONS.find((d) => Math.abs(d.az - az) < 0.5);
+}
+
+// Угол между осью луча и нормалью стены. 20° — луч почти в стену, 86° — почти
+// вдоль неё. Это и есть регулятор формы пятна: круг -> эллипс -> клин.
+const GRAZE_MIN = 20;
+const GRAZE_MAX = 86;
+
+// azimuth — куда луч уходит по плоскости кадра. 0 — вниз, +45 — вниз-вправо.
+function beamAxis(azimuth, grazing) {
+  const a = (azimuth * Math.PI) / 180;
+  const b = ((GRAZE_MIN + (GRAZE_MAX - GRAZE_MIN) * grazing) * Math.PI) / 180;
+  const s = Math.sin(b);
+  return [Math.sin(a) * s, -Math.cos(a) * s, -Math.cos(b)];
+}
+
+const PARAMS = [
+  // --- то, чем кадр собирается на самом деле ---
+  // Тема хранится в пресете, но сама по себе ничего не считает: это отметка
+  // о том, какой тональный профиль применён. Числа профиля живут в theme.js.
+  { key: 'theme', label: 'Тема', type: 'select', def: 'dark', group: 'primary',
+    options: [['dark', 'Тёмная'], ['light', 'Светлая']] },
+  { key: 'azimuth', label: 'Поворот луча', type: 'range', min: -180, max: 180, step: 1, def: 45, group: 'primary', unit: '°',
+    hint: 'куда луч уходит по кадру; кнопки выше — круглые значения этой же оси' },
+  { key: 'grazing', label: 'Наклон луча', type: 'range', min: 0, max: 1, step: 0.005, def: 0.55, group: 'primary',
+    hint: 'чем положе луч идёт вдоль стены, тем острее пятно: круг → эллипс → клин' },
+  { key: 'coneAngle',    label: 'Ширина луча', type: 'range', min: 4, max: 90, step: 0.5, def: 24, group: 'primary', unit: '°',
+    hint: 'угол половинной яркости; от 89° — точечный источник' },
+  { key: 'coneSoftness', label: 'Рассеиватель', type: 'range', min: 0, max: 1, step: 0.01, def: 0.42, group: 'primary',
+    hint: '0 — линзовый прибор с границей пятна, 1 — софтбокс без границы' },
+  { key: 'lightZ',       label: 'Расстояние до стены', type: 'range', min: 0.05, max: 3.0, step: 0.01, def: 0.8, group: 'primary',
+    hint: 'главный регулятор собранности пятна' },
+  { key: 'hazeDensity', label: 'Дымка', type: 'range', min: 0, max: 1, step: 0.005, def: 0.28, group: 'primary',
+    hint: '0 — виден только след на стене (всегда овал), выше — виден сам луч: конус в проекции даёт прямые края' },
+  { key: 'exposureEV',   label: 'Экспозиция', type: 'range', min: -4, max: 12, step: 0.05, def: 4.5, group: 'primary', unit: ' EV' },
+  { key: 'saturation',   label: 'Насыщенность', type: 'range', min: 0, max: 2, step: 0.01, def: 1.2, group: 'frame',
+    hint: 'трим после tonemap: ACES съедает цвет в полутонах, здесь он возвращается' },
+  { key: 'lightColor',   label: 'Цвет света', type: 'color', def: '#FFFFFF', group: 'primary' },
+  { key: 'albedo',       label: 'Цвет фона', type: 'color', def: '#0B0B0E', group: 'primary' },
+
+  // --- источник, детали ---
+  { key: 'lightX', label: 'X', type: 'range', min: -1.5, max: 1.5, step: 0.01, def: -0.62, group: 'primary', hint: 'в долях короткой стороны; обычно проще перетащить по превью' },
+  { key: 'lightY', label: 'Y', type: 'range', min: -1.5, max: 1.5, step: 0.01, def: 0.42, group: 'primary' },
+  { key: 'lightType', label: 'Тип', type: 'select', def: 'spot', group: 'hidden',
+    options: [['spot', 'Прожектор'], ['point', 'Точечный'], ['directional', 'Параллельный']] },
+  { key: 'radius', label: 'Размер источника', type: 'range', min: 0.001, max: 0.5, step: 0.001, def: 0.16, group: 'source',
+    hint: 'мягкость ядра и угловая ширина полутени' },
+  { key: 'range',  label: 'Дальность', type: 'range', min: 0.5, max: 8.0, step: 0.05, def: 3.2, group: 'source' },
+  { key: 'lightSaturation', label: 'Насыщенность самого света', type: 'range', min: 0, max: 2, step: 0.01, def: 1.0, group: 'source' },
+
+  // --- поверхность ---
+  { key: 'roughness',    label: 'Шероховатость', type: 'range', min: 0.02, max: 1.0, step: 0.005, def: 0.85, group: 'scene' },
+  // Потолок 0.2 годился, пока фон был тёмным: подложка albedo * ambient никогда
+  // не поднималась выше 0.11 в линейном, то есть примерно до серого #5E5E5E.
+  // Светлая тема требует около 1.9 — иначе цвет темы физически недостижим, и
+  // углы кадра неизбежно уходят в тёмное. Шкала кубическая: у нуля сохраняется
+  // прежняя точность (в тёмных пресетах уровни порядка 0.003), а верх шкалы
+  // добирает светлую подложку. Потолок 4 берёт фоны почти до #F5F6F8; ещё
+  // светлее ACES не отдаёт в принципе — кривая подходит к белому асимптотически.
+  { key: 'ambientLevel', label: 'Заливка', type: 'range', min: 0, max: 4.0, step: 0.001, def: 0.01, group: 'scene', curve: 3,
+    hint: 'общий свет комнаты; на светлой теме решается обратной задачей, а не подбирается' },
+  { key: 'ambientColor', label: 'Цвет заливки', type: 'color', def: '#FFFFFF', group: 'scene' },
+
+  // --- объём: работает только на вкладке «Объём» -------------------------
+  // Пять ползунков, и каждый в нуле возвращает базовый режим. Поэтому вкладка
+  // ничего не ломает: она добавляет ходы, а не заменяет расчёт.
+  { key: 'beamSpread', label: 'Раскрытие клина', type: 'range', min: -1, max: 1, step: 0.01, def: 0, group: 'source',
+    hint: '0 — круглый конус; вправо — луч расходится веером поперёк и даёт клин с прямыми краями, влево — сжимается в щель' },
+  { key: 'hazeBackscatter', label: 'Обратное рассеяние', type: 'range', min: 0, max: 1, step: 0.005, def: 0, group: 'medium', fine: true,
+    hint: 'второй лепесток фазовой функции: среда начинает светиться не только по лучу, но и против него' },
+  { key: 'mediumColor', label: 'Цвет среды', type: 'color', def: '#FFFFFF', group: 'medium' },
+  { key: 'mediumTint', label: 'Плотность цвета среды', type: 'range', min: 0, max: 3, step: 0.01, def: 0, group: 'medium', showIf: 'beamExtinct',
+    hint: 'насколько сильно среда съедает чужие каналы; белая среда нейтральна при любом значении' },
+  { key: 'beamExtinct', rebuilds: true, label: 'Затухание луча в среде', type: 'range', min: 0, max: 4, step: 0.01, def: 0, group: 'medium',
+    hint: 'луч гаснет по пути от прибора и вместе с цветом среды перестаёт быть белым — этим он и садится в пространство' },
+  { key: 'goboAmount', rebuilds: true, label: 'Заслонка', type: 'range', min: 0, max: 1, step: 0.005, def: 0, group: 'rays',
+    hint: 'режет свет у самого прибора на отдельные лучи; 0 — сплошной клин, как было' },
+  { key: 'goboScale', label: 'Сколько лучей', type: 'range', min: 0.5, max: 24, step: 0.1, def: 5, group: 'rays', showIf: 'goboAmount',
+    hint: 'сколько полос укладывается в ширину пучка; шаг неровный нарочно' },
+  { key: 'goboSharp', label: 'Резкость лучей', type: 'range', min: 0, max: 1, step: 0.005, def: 0.5, group: 'rays', showIf: 'goboAmount',
+    hint: '0 — мягкая рябь по клину, 1 — узкие лучи с тёмными промежутками между ними' },
+  { key: 'goboPlane', rebuilds: true, label: 'Заслонка в сцене', type: 'toggle', def: false, group: 'rays', showIf: 'goboAmount',
+    hint: 'ставит заслонку плоскостью на расстоянии от прибора, а не углом у него. До неё свет идёт целиком, после — только через окно: у прибора зарево, дальше лучи с началом и тень на полу' },
+  { key: 'goboDist', label: 'Расстояние до заслонки', type: 'range', min: 0.05, max: 2.5, step: 0.01, def: 0.45, group: 'rays', showIf: 'goboPlane',
+    hint: 'чем дальше заслонка от прибора, тем больше зарево перед ней и тем позже начинаются лучи' },
+  { key: 'goboAperture', label: 'Размер окна', type: 'range', min: 0.03, max: 1.5, step: 0.005, def: 0.28, group: 'rays', showIf: 'goboPlane',
+    hint: 'половина проёма в единицах сцены; за краем окна света нет вовсе' },
+  { key: 'goboBlur', label: 'Размытие лучей', type: 'range', min: 0, max: 2, step: 0.005, def: 0, group: 'rays', fine: true, showIf: 'goboAmount',
+    hint: 'лучи расползаются по мере ухода от прибора — так их затирает многократное рассеяние; 0 — резкие на всей длине' },
+  // Один ползунок на два поля: и заслонка, и клубы неповторяющиеся, и перебирают
+  // их всегда вместе — до «удачного места». Двумя отдельными никто не пользовался.
+  { key: 'goboOffset', label: 'Сдвиг рисунка', type: 'range', min: 0, max: 12, step: 0.01, def: 0, group: 'rays', fine: true, showIf: 'goboAmount',
+    hint: 'двигает и лучи, и клубы: рисунок неповторяющийся, удачное место ловится перебором' },
+  { key: 'fogSettle', label: 'Оседание дымки', type: 'range', min: -2, max: 2, step: 0.01, def: 0, group: 'medium', fine: true,
+    hint: 'плюс — дымка гуще внизу кадра, минус — вверху; 0 — однородна, как в базовом режиме' },
+
+  { key: 'msAmount', label: 'Многократное рассеяние', type: 'range', min: 0, max: 1, step: 0.005, def: 0, group: 'medium',
+    hint: 'свет, отскочивший второй и третий раз: широкий ореол вокруг луча и подсветка в тёмных промежутках. Однократное рассеяние их не даёт в принципе. Добавляет света, а не перераспределяет — после подъёма проверьте экспозицию' },
+  { key: 'noiseAmount', rebuilds: true, label: 'Клубы в среде', type: 'range', min: 0, max: 1, step: 0.005, def: 0, group: 'medium',
+    hint: 'неоднородность дымки; 0 — гладкая, как в базовом режиме. Модуляция симметрична: среда местами гуще, местами реже, в среднем та же' },
+  { key: 'noiseScale', label: 'Размер клубов', type: 'range', min: 0.3, max: 12, step: 0.05, def: 2.2, group: 'medium', fine: true, showIf: 'noiseAmount',
+    hint: 'меньше — крупные медленные облака, больше — мелкая взвесь' },
+
+  { key: 'animate', rebuilds: true, label: 'Оживить', type: 'toggle', def: false, group: 'motion',
+    hint: 'лучи переливаются, клубы плывут, взвесь сносит потоком. Кадр начинает считаться непрерывно, поэтому марш дымки в превью прореживается — на экспорт это не влияет' },
+  { key: 'animSpeed', label: 'Скорость', type: 'range', min: 0.05, max: 4, step: 0.01, def: 1, group: 'motion', showIf: 'animate' },
+
+  { key: 'particlesOn', rebuilds: true, label: 'Частицы', type: 'toggle', def: false, group: 'dust',
+    hint: 'взвесь в воздухе: крупинки стоят в объёме и освещаются тем же светом, поэтому сами загораются внутри луча и подхватывают рисунок заслонки' },
+  { key: 'particleDensity', label: 'Сколько частиц', type: 'range', min: 1, max: 40, step: 0.5, def: 18, group: 'dust', fine: true, showIf: 'particlesOn',
+    hint: 'крупинок на единицу кадра; на яркость каждой не влияет' },
+  { key: 'particleSize', label: 'Размер частиц', type: 'range', min: 0.02, max: 0.9, step: 0.005, def: 0.28, group: 'dust', fine: true, showIf: 'particlesOn',
+    hint: 'диск расфокуса; камера наведена на стену, поэтому ближние крупинки размыты сильнее и, соответственно, тусклее' },
+  { key: 'particleGlow', label: 'Яркость частиц', type: 'range', min: 0, max: 1.5, step: 0.002, def: 0.08, group: 'dust', curve: 2, showIf: 'particlesOn',
+    hint: 'рабочая зона — сотые доли: крупинку освещает тот же прибор, что и стену, поэтому по умолчанию она слепит' },
+
+  { key: 'floorOn', rebuilds: true, label: 'Пол', type: 'toggle', def: false, group: 'scene',
+    hint: 'вторая поверхность со своей нормалью, а не градиент внизу кадра: свет ложится на неё лужей и уходит в глубину' },
+  { key: 'floorY', label: 'Линия горизонта', type: 'range', min: -0.1, max: 0.6, step: 0.005, def: 0.34, group: 'scene', showIf: 'floorOn',
+    hint: 'в долях короткой стороны вниз от центра; 0.5 — у нижнего края кадра, меньше — пола видно больше' },
+  { key: 'floorBlend', label: 'Галтель', type: 'range', min: 0, max: 0.8, step: 0.005, def: 0.15, group: 'scene', fine: true, showIf: 'floorOn',
+    hint: 'скругление стыка пола со стеной; 0 — жёсткий угол, и тогда на горизонте видна линия склейки' },
+  { key: 'floorTilt', label: 'Наклон пола', type: 'range', min: 20, max: 85, step: 0.5, def: 68, group: 'scene', fine: true, showIf: 'floorOn', unit: '°',
+    hint: 'угол между нормалью пола и вертикалью: 85° — пол почти совпадает со стеной, 20° — уходит в глубину круто' },
+
+  // --- среда ---
+  { key: 'hazeAnisotropy', label: 'Анизотропия', type: 'range', min: -0.9, max: 0.9, step: 0.01, def: 0.45, group: 'medium', hint: '> 0 — рассеяние вперёд, к камере' },
+  { key: 'hazeDepth',      label: 'Глубина объёма', type: 'range', min: 0.2, max: 6.0, step: 0.05, def: 2.6, group: 'medium' },
+  { key: 'sourceGlow',     label: 'Виден сам источник', type: 'range', min: 0, max: 1, step: 0.005, def: 0.0, group: 'hidden',
+    hint: 'искра в кадре; ореол вокруг неё делают дымка и bloom' },
+
+  // --- постобработка ---
+  { key: 'bloomIntensity', label: 'Bloom', type: 'range', min: 0, max: 1, step: 0.005, def: 0.25, group: 'frame' },
+  // Потолок 12 нужен светлой теме: порог обязан стоять выше подложки, а у
+  // светлого фона она сама по себе яркая (у почти белого — под 2.7). Шкала
+  // квадратичная, чтобы низ остался таким же подробным: тёмные пресеты живут
+  // на 0.09…1.2.
+  { key: 'bloomThreshold', label: 'Порог bloom', type: 'range', min: 0, max: 12, step: 0.01, def: 1.0, group: 'frame', fine: true, curve: 2,
+    hint: 'на светлой теме считается от подложки: ниже неё bloom подсвечивал бы ровный фон' },
+  { key: 'bloomRadius',    label: 'Радиус bloom', type: 'range', min: 0, max: 1, step: 0.005, def: 0.5, group: 'frame' },
+  { key: 'grainAmount',    label: 'Зерно', type: 'range', min: 0, max: 0.06, step: 0.0005, def: 0.012, group: 'frame' },
+  { key: 'vignetteBoost',  label: 'Усиление спада', type: 'range', min: 0, max: 1, step: 0.005, def: 0.0, group: 'frame', hint: 'центр — проекция источника, не центр кадра' },
+];
+
+// Второй источник повторяет набор ключей главного.
+const FILL_KEYS = [
+  'lightX', 'lightY', 'lightZ', 'lightType', 'azimuth', 'grazing', 'radius',
+  'coneAngle', 'coneSoftness', 'range', 'exposureEV', 'lightColor', 'lightSaturation',
+  'sourceGlow',
+];
+
+/*
+  Порядок блоков — порядок вопросов, которые задаёшь кадру: откуда светит, чем
+  свет порезан, сквозь что идёт, на что падает, что в воздухе, движется ли это
+  и как снято.
+
+  Вкладок больше нет: «Объём» слился с базовым режимом. Разделение было нужно,
+  пока новый расчёт мог что-то сломать; после того как совпадение с базовым
+  измерено (не больше 1/255 при выключенных добавках), держать две панели —
+  только путать.
+*/
+const GROUPS = [
+  { id: 'source', title: 'Источник' },
+  { id: 'rays',   title: 'Лучи' },
+  { id: 'medium', title: 'Среда' },
+  { id: 'scene',  title: 'Сцена' },
+  { id: 'dust',   title: 'Взвесь' },
+  { id: 'motion', title: 'Движение' },
+  { id: 'frame',  title: 'Кадр' },
+  { id: 'fill',   title: 'Второй источник' },
+];
+
+function defaults() {
+  // Наклон плоскости из панели убран, но в расчёте остался: старые JSON,
+  // где он задан, продолжают рендериться как раньше.
+  const p = { tiltX: 0, tiltY: 0 };
+  for (const d of PARAMS) p[d.key] = d.def;
+  p.fillEnabled = false;
+  p.fill = {};
+  for (const k of FILL_KEYS) p.fill[k] = PARAMS.find((x) => x.key === k).def;
+  p.fill.exposureEV = 1.0;
+  p.fill.azimuth = -135;
+  p.fill.lightX = 0.62;
+  p.fill.lightY = -0.42;
+  p.seed = 17.0;
+  return p;
+}
+
+function paramDef(key) {
+  return PARAMS.find((p) => p.key === key);
+}
+
+// Единственное жёсткое ограничение модели: второй источник не может
+// сравняться с главным.
+function clampFill(p) {
+  const cap = p.exposureEV - 1.5;
+  if (p.fill.exposureEV > cap) p.fill.exposureEV = Math.round(cap * 100) / 100;
+  return p;
+}
+
+
+/* ===== src/gl/program.js ===== */
+// Компиляция программ и кеш локаций юниформов.
+
+function compile(gl, type, source, name) {
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, source);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+    const log = gl.getShaderInfoLog(sh);
+    gl.deleteShader(sh);
+    throw new Error(`Шейдер ${name} не собрался:\n${log}`);
+  }
+  return sh;
+}
+
+class Program {
+  constructor(gl, vertSrc, fragSrc, name = 'program') {
+    this.gl = gl;
+    this.name = name;
+    const vs = compile(gl, gl.VERTEX_SHADER, vertSrc, name + '.vert');
+    const fs = compile(gl, gl.FRAGMENT_SHADER, fragSrc, name + '.frag');
+    const p = gl.createProgram();
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      throw new Error(`Программа ${name} не слинковалась:\n${gl.getProgramInfoLog(p)}`);
+    }
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    this.handle = p;
+    this.locs = new Map();
+  }
+
+  use() {
+    this.gl.useProgram(this.handle);
+    this._unit = 0;
+    return this;
+  }
+
+  loc(name) {
+    if (!this.locs.has(name)) {
+      this.locs.set(name, this.gl.getUniformLocation(this.handle, name));
+    }
+    return this.locs.get(name);
+  }
+
+  int(name, v)   { const l = this.loc(name); if (l) this.gl.uniform1i(l, v); return this; }
+  float(name, v) { const l = this.loc(name); if (l) this.gl.uniform1f(l, v); return this; }
+  vec2(name, x, y)    { const l = this.loc(name); if (l) this.gl.uniform2f(l, x, y); return this; }
+  vec3(name, x, y, z) { const l = this.loc(name); if (l) this.gl.uniform3f(l, x, y, z); return this; }
+  floats(name, arr)   { const l = this.loc(name); if (l) this.gl.uniform1fv(l, arr); return this; }
+  ints(name, arr)     { const l = this.loc(name); if (l) this.gl.uniform1iv(l, arr); return this; }
+  vec3s(name, arr)    { const l = this.loc(name); if (l) this.gl.uniform3fv(l, arr); return this; }
+
+  texture(name, tex) {
+    const l = this.loc(name);
+    if (!l) return this;
+    const unit = this._unit++;
+    this.gl.activeTexture(this.gl.TEXTURE0 + unit);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, tex);
+    this.gl.uniform1i(l, unit);
+    return this;
+  }
+}
+
+
+/* ===== src/gl/fbo.js ===== */
+// Обёртка над framebuffer + текстурой цвета.
+
+class Fbo {
+  constructor(gl, width, height, internalFormat, type) {
+    this.gl = gl;
+    this.internalFormat = internalFormat;
+    this.type = type;
+    this.tex = gl.createTexture();
+    this.fb = gl.createFramebuffer();
+    this.width = 0;
+    this.height = 0;
+    this.resize(width, height);
+  }
+
+  resize(width, height) {
+    width = Math.max(1, Math.floor(width));
+    height = Math.max(1, Math.floor(height));
+    if (width === this.width && height === this.height) return this;
+    const gl = this.gl;
+    this.width = width;
+    this.height = height;
+
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, this.internalFormat, width, height, 0,
+                  gl.RGBA, this.type, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.tex, 0);
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+      throw new Error('Framebuffer неполон: 0x' + status.toString(16));
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return this;
+  }
+
+  bind() {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fb);
+    gl.viewport(0, 0, this.width, this.height);
+    return this;
+  }
+
+  dispose() {
+    this.gl.deleteTexture(this.tex);
+    this.gl.deleteFramebuffer(this.fb);
+  }
+}
+
+
+/* ===== src/ui/presets.js ===== */
+
+const PRESET_FILES = [
+  ['direction-top-left',      'Направление · сверху слева'],
+  ['direction-top-center',    'Направление · сверху вниз'],
+  ['direction-top-right',     'Направление · сверху справа'],
+  ['direction-bottom-left',   'Направление · снизу слева'],
+  ['direction-bottom-center', 'Направление · снизу вверх'],
+  ['direction-bottom-right',  'Направление · снизу справа'],
+  ['firefly',                 'VK · сплэш (светлячок)'],
+  ['volume-wedge',            'Объём · клин'],
+  ['volume-rays',             'Объём · лучи и пол'],
+  ['volume-window',           'Объём · окно'],
+];
+
+// Принимаем только известные ключи — чужой JSON не сможет подсунуть мусор.
+// Пресеты первых версий хранили направление строкой. Переводим в угол,
+// иначе старый файл молча приедет с поворотом по умолчанию.
+function legacyAzimuth(o) {
+  if (typeof o?.azimuth === 'number') return null;
+  const d = DIRECTIONS.find((x) => x.id === o?.direction);
+  return d ? d.az : null;
+}
+
+function sanitize(raw) {
+  const base = defaults();
+  if (!raw || typeof raw !== 'object') return base;
+  const src = raw.params && typeof raw.params === 'object' ? raw.params : raw;
+  const legacy = legacyAzimuth(src);
+  if (legacy !== null) base.azimuth = legacy;
+  const legacyFill = legacyAzimuth(src.fill);
+  if (legacyFill !== null) base.fill.azimuth = legacyFill;
+  for (const d of PARAMS) {
+    const v = src[d.key];
+    if (v == null) continue;
+    if (d.type === 'range' && typeof v === 'number' && Number.isFinite(v)) {
+      base[d.key] = Math.min(d.max, Math.max(d.min, v));
+    } else if (d.type === 'color' && typeof v === 'string' && /^#[0-9a-fA-F]{3,6}$/.test(v)) {
+      base[d.key] = v.toUpperCase();
+    } else if ((d.type === 'select' || d.type === 'buttons') && d.options.some(([o]) => o === v)) {
+      base[d.key] = v;
+    } else if (d.type === 'toggle') {
+      base[d.key] = !!v;
+    }
+  }
+  base.fillEnabled = !!src.fillEnabled;
+  if (src.fill && typeof src.fill === 'object') {
+    for (const k of FILL_KEYS) {
+      const d = PARAMS.find((p) => p.key === k);
+      const v = src.fill[k];
+      if (v == null) continue;
+      if (d.type === 'range' && typeof v === 'number' && Number.isFinite(v)) {
+        base.fill[k] = Math.min(d.max, Math.max(d.min, v));
+      } else if (d.type === 'color' && typeof v === 'string' && /^#[0-9a-fA-F]{3,6}$/.test(v)) {
+        base.fill[k] = v.toUpperCase();
+      } else if ((d.type === 'select' || d.type === 'buttons') && d.options.some(([o]) => o === v)) {
+        base.fill[k] = v;
+      }
+    }
+  }
+  // наклон плоскости из панели убран, но в файле он мог остаться
+  for (const k of ['tiltX', 'tiltY']) {
+    const v = src[k];
+    if (typeof v === 'number' && Number.isFinite(v)) base[k] = Math.min(60, Math.max(-60, v));
+  }
+  if (typeof src.seed === 'number' && Number.isFinite(src.seed)) base.seed = src.seed;
+  return clampFill(base);
+}
+
+function serialize(state, name = 'photon') {
+  const params = {};
+  for (const d of PARAMS) params[d.key] = state[d.key];
+  params.fillEnabled = state.fillEnabled;
+  params.fill = { ...state.fill };
+  params.seed = state.seed;
+  return JSON.stringify({ version: SCHEMA_VERSION, name, params }, null, 2);
+}
+
+async function loadPreset(id, base = './presets/') {
+  const inlined = globalThis.__PHOTON_ASSETS?.presets;
+  if (inlined && inlined[id]) return sanitize(inlined[id]);
+  const res = await fetch(`${base}${id}.json`);
+  if (!res.ok) throw new Error(`Пресет ${id} не найден`);
+  return sanitize(await res.json());
+}
+
+
+/* ===== src/gl/renderer.js ===== */
+
+
+
+/*
+  Цепочка bloom живёт на СВОЁМ фиксированном разрешении, не на разрешении
+  кадра. Фиксированного числа уровней мало: на мелких уровнях целочисленное
+  деление ломает пропорции по-разному (960x540 даёт 15x8, а 3840x2160 —
+  60x33), и превью расходится с экспортом сильнее всего у краёв кадра.
+  При фиксированной базе цепочка побитово одинакова на любом разрешении,
+  а экспорт в 4K вдобавок становится дешевле.
+
+  До базы кадр доводится последовательными уменьшениями вдвое — иначе
+  прыжок с 3840 сразу на 512 даст алиасинг на ярких деталях.
+*/
+const BLOOM_LEVELS = 6;
+const BLOOM_BASE = 512;
+
+function bloomBase(w, h) {
+  const a = w / h;
+  return w >= h
+    ? [BLOOM_BASE, Math.max(2, Math.round(BLOOM_BASE / a))]
+    : [Math.max(2, Math.round(BLOOM_BASE * a)), BLOOM_BASE];
+}
+
+const MODES = { full: 0, base: 1, light: 2, haze: 3, spec: 4, stack: 5 };
+
+// Столько итераций развёрнуто в марше обоих шейдеров. Больше запрашивать
+// нельзя: см. render().
+const MAX_HAZE_STEPS = 256;
+
+// В однофайловой сборке шейдеры лежат уже в странице: fetch по file://
+// заблокирован, и без этой развилки собранный HTML не открылся бы двойным
+// кликом. В обычном режиме ветка не задействована.
+async function loadText(url) {
+  const inlined = globalThis.__PHOTON_ASSETS?.shaders;
+  if (inlined) {
+    const name = url.split('/').pop();
+    if (inlined[name]) return inlined[name];
+  }
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Не загрузился ${url} (${r.status})`);
+  return r.text();
+}
+
+// --- цвет --------------------------------------------------------------
+
+function hexToSrgb(hex) {
+  const h = hex.replace('#', '').trim();
+  const n = h.length === 3
+    ? h.split('').map((c) => c + c).join('')
+    : h.padEnd(6, '0').slice(0, 6);
+  return [
+    parseInt(n.slice(0, 2), 16) / 255,
+    parseInt(n.slice(2, 4), 16) / 255,
+    parseInt(n.slice(4, 6), 16) / 255,
+  ];
+}
+
+// Точный EOTF, не pow(x, 2.2).
+function srgbToLinear(c) {
+  return c.map((v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+}
+
+function saturate(linear, s) {
+  const luma = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+  return linear.map((v) => Math.max(0, luma + (v - luma) * s));
+}
+
+/*
+  Относительное ослабление среды по каналам.
+
+  Хочется простого: пусть свет, прошедший сквозь среду, уходит в её цвет.
+  Значит, канал, которого в цвете среды больше всех, должен гаснуть слабее
+  остальных. Отсюда ext_i = 1 + k * (1 - c_i / max c): у самого сильного
+  канала множитель ровно 1, у остальных больше, и с ростом пути разница
+  копится экспонентой.
+
+  Белая среда даёт (1,1,1) при любой плотности цвета — это и правильно:
+  серая дымка не красит. Нулевая плотность — тоже, отсюда совпадение с
+  базовым режимом.
+*/
+function mediumExtinction(hex, tint) {
+  if (!(tint > 0.0001)) return [1, 1, 1];
+  const c = srgbToLinear(hexToSrgb(hex));
+  const m = Math.max(c[0], c[1], c[2], 1e-4);
+  return c.map((v) => 1 + tint * (1 - v / m));
+}
+
+/*
+  Среднее маски заслонки — численно, по той же формуле, что в шейдере.
+
+  Формула повторена в двух местах, и это неприятно ровно так же, как с
+  тональным конвейером в theme.js. Альтернатива хуже: аналитического среднего
+  у произведения трёх несоизмеримых синусов в степени нет, а читать кадр с GPU
+  ради одного числа на каждый рендер — не вариант.
+
+  Усреднение идёт по аргументу равномерно, а не по сечению пучка с гауссовым
+  весом. Это не точная сохранённая энергия, а нормировка: она держит яркость
+  кадра примерно постоянной, пока человек перебирает рисунок. Ровно это и нужно.
+
+  Среднее зависит только от резкости: масштаб и сдвиг — линейная замена
+  переменной, на среднем по всей оси она не сказывается. Поэтому кеш на одно
+  значение отрабатывает почти всегда.
+*/
+let goboNormCache = [null, 1];
+
+function goboNorm(sharp) {
+  if (goboNormCache[0] === sharp) return goboNormCache[1];
+  const k = 1 + 7 * sharp;
+  const N = 8192;
+  let sum = 0;
+  for (let i = 0; i < N; i++) {
+    // 400 радиан — заведомо много периодов у самой длинной гармоники (0.61)
+    const x = (i / N) * 400;
+    const v = (Math.sin(x) + 0.7 * Math.sin(x * 1.73 + 1.1) + 0.5 * Math.sin(x * 0.61 - 2.2)) / 2.2;
+    sum += Math.pow(Math.min(1, Math.max(0, 0.5 + 0.5 * v)), k);
+  }
+  const norm = 1 / Math.max(sum / N, 1e-4);
+  goboNormCache = [sharp, norm];
+  return norm;
+}
+
+function lightLinear(hex, sat) {
+  return saturate(srgbToLinear(hexToSrgb(hex)), sat);
+}
+
+const deg = (d) => (d * Math.PI) / 180;
+
+function planeNormal(tiltX, tiltY) {
+  // Rx(tiltX) * Ry(tiltY) применённые к (0,0,1)
+  const ax = deg(tiltX), ay = deg(tiltY);
+  let n = [Math.sin(ay) * Math.cos(ax), -Math.sin(ax), Math.cos(ax) * Math.cos(ay)];
+  const len = Math.hypot(...n);
+  return n.map((v) => v / len);
+}
+
+// --- рендерер ----------------------------------------------------------
+
+class Renderer {
+  constructor(canvas) {
+    this.canvas = canvas;
+    const gl = canvas.getContext('webgl2', {
+      alpha: false,
+      antialias: false,
+      preserveDrawingBuffer: false,
+      premultipliedAlpha: false,
+    });
+    if (!gl) throw new Error('WebGL2 недоступен в этом браузере.');
+    this.gl = gl;
+
+    // RGBA16F как цель рендера требует расширения.
+    this.floatExt = gl.getExtension('EXT_color_buffer_float')
+                 || gl.getExtension('EXT_color_buffer_half_float');
+    if (!this.floatExt) {
+      throw new Error('Нет EXT_color_buffer_float: RGBA16F-буфер недоступен, HDR-конвейер не соберётся.');
+    }
+    gl.getExtension('OES_texture_float_linear');
+
+    this.vao = gl.createVertexArray();
+    this.size = [0, 0];
+  }
+
+  async init(base = './src/shaders/') {
+    const [vert, volume, down, up, composite, accum] = await Promise.all([
+      loadText(base + 'quad.vert'),
+      loadText(base + 'volume.frag'),
+      loadText(base + 'bloom_down.frag'),
+      loadText(base + 'bloom_up.frag'),
+      loadText(base + 'composite.frag'),
+      loadText(base + 'accumulate.frag'),
+    ]);
+    const gl = this.gl;
+    /*
+      Программа одна. Раньше их было две — старая photon.frag и volume.frag с
+      объёмом, — и переключались они вкладкой. Вкладки слиты: совпадение при
+      выключенных добавках измерено (не больше 1/255), держать вторую программу
+      незачем. photon.frag лежит в attic как эталон, по которому это совпадение
+      проверялось.
+    */
+    this.pVolume = new Program(gl, vert, volume, 'volume');
+    this.pDown      = new Program(gl, vert, down, 'bloom_down');
+    this.pUp        = new Program(gl, vert, up, 'bloom_up');
+    this.pComposite = new Program(gl, vert, composite, 'composite');
+    this.pAccum     = new Program(gl, vert, accum, 'accumulate');
+
+    this.scene = new Fbo(gl, 4, 4, gl.RGBA16F, gl.HALF_FLOAT);
+    // Пинг-понг для накопления: читать и писать одну текстуру нельзя.
+    this.hist = [
+      new Fbo(gl, 4, 4, gl.RGBA16F, gl.HALF_FLOAT),
+      new Fbo(gl, 4, 4, gl.RGBA16F, gl.HALF_FLOAT),
+    ];
+    this.histIdx = 0;
+    // То, что читают bloom и композит. Без накопления это сам scene.
+    this.sceneFbo = this.scene;
+    this.pre = [];
+    this.preSteps = 0;
+    this.mips = [];
+    for (let i = 0; i < BLOOM_LEVELS; i++) {
+      this.mips.push(new Fbo(gl, 4, 4, gl.RGBA16F, gl.HALF_FLOAT));
+    }
+    return this;
+  }
+
+  resize(w, h) {
+    if (this.size[0] === w && this.size[1] === h) return;
+    const gl = this.gl;
+    this.size = [w, h];
+    this.scene.resize(w, h);
+
+    const [bw, bh] = bloomBase(w, h);
+    for (let i = 0; i < BLOOM_LEVELS; i++) {
+      this.mips[i].resize(
+        Math.max(2, Math.round(bw / Math.pow(2, i))),
+        Math.max(2, Math.round(bh / Math.pow(2, i))),
+      );
+    }
+
+    // ступени уменьшения вдвое от кадра до базы цепочки
+    const steps = [];
+    let cw = w, ch = h;
+    while (cw > bw * 2 && ch > bh * 2) {
+      cw = Math.max(1, cw >> 1);
+      ch = Math.max(1, ch >> 1);
+      steps.push([cw, ch]);
+    }
+    while (this.pre.length < steps.length) {
+      this.pre.push(new Fbo(gl, 4, 4, gl.RGBA16F, gl.HALF_FLOAT));
+    }
+    steps.forEach(([sw, sh], i) => this.pre[i].resize(sw, sh));
+    this.preSteps = steps.length;
+  }
+
+  draw() {
+    const gl = this.gl;
+    gl.bindVertexArray(this.vao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  // --- сборка юниформов источников ------------------------------------
+
+  packLights(p) {
+    const lights = [];
+    const push = (src, gain) => {
+      const type = src.lightType === 'directional' ? 2 : (src.lightType === 'point' ? 1 : 0);
+      const angle = src.coneAngle;
+      // при 89° и больше конус вырождается в точечный источник
+      const degenerate = angle >= 89;
+      lights.push({
+        pos: [src.lightX, src.lightY, src.lightZ],
+        dir: beamAxis(src.azimuth, src.grazing),
+        color: lightLinear(src.lightColor, src.lightSaturation),
+        gain,
+        glow: src.sourceGlow ?? 0,
+        radius: src.radius,
+        coneHalf: deg(Math.min(angle, 89)),
+        coneSoft: src.coneSoftness,
+        range: src.range,
+        type: (type === 0 && degenerate) ? 1 : type,
+      });
+    };
+
+    push(p, Math.pow(2, p.exposureEV));
+    if (p.fillEnabled) {
+      // Принцип одного доминирующего фотона вшит сюда, а не в PDF.
+      // Ограничение касается вклада в ОСВЕЩЕНИЕ. Яркость самой искры
+      // (sourceGlow) от экспозиции не зависит вовсе — см. photon.frag.
+      const capped = Math.min(p.fill.exposureEV, p.exposureEV - 1.5);
+      push(p.fill, Math.pow(2, capped));
+    }
+
+    const n = lights.length;
+    const pos = new Float32Array(6), dir = new Float32Array(6), col = new Float32Array(6);
+    const gain = new Float32Array(2), rad = new Float32Array(2);
+    const glow = new Float32Array(2);
+    const half = new Float32Array(2), soft = new Float32Array(2), rng = new Float32Array(2);
+    const typ = new Int32Array(2);
+    lights.forEach((L, i) => {
+      pos.set(L.pos, i * 3); dir.set(L.dir, i * 3); col.set(L.color, i * 3);
+      gain[i] = L.gain; rad[i] = L.radius;
+      glow[i] = L.glow;
+      half[i] = L.coneHalf; soft[i] = L.coneSoft; rng[i] = L.range; typ[i] = L.type;
+    });
+    return { n, pos, dir, col, gain, rad, half, soft, rng, typ, glow };
+  }
+
+  // --- проходы ---------------------------------------------------------
+
+  scenePass(p, w, h, mode, hazeSteps, opts = {}) {
+    const gl = this.gl;
+    const L = this.packLights(p);
+    const N = planeNormal(p.tiltX ?? 0, p.tiltY ?? 0);
+    const albedo = srgbToLinear(hexToSrgb(p.albedo));
+    const amb = srgbToLinear(hexToSrgb(p.ambientColor)).map((v) => v * p.ambientLevel);
+
+    this.scene.bind();
+    const prog = this.pVolume.use();
+    prog.vec2('uResolution', w, h)
+        .float('uPlaneScale', 0.5)
+        .int('uMode', MODES[mode] ?? 0)
+        .float('uFrame', opts.frame ?? 0)
+        .vec3s('uLightPos', L.pos)
+        .vec3s('uLightDir', L.dir)
+        .vec3s('uLightColor', L.col)
+        .floats('uLightGain', L.gain)
+        .floats('uSourceGlow', L.glow)
+        .floats('uLightRadius', L.rad)
+        .floats('uConeHalf', L.half)
+        .floats('uConeSoft', L.soft)
+        .floats('uRange', L.rng)
+        .ints('uLightType', L.typ)
+        .int('uLightCount', L.n)
+        .vec3('uAlbedo', albedo[0], albedo[1], albedo[2])
+        .float('uRoughness', Math.max(0.02, p.roughness))
+        .vec3('uNormal', N[0], N[1], N[2])
+        .vec3('uAmbient', amb[0], amb[1], amb[2])
+        .float('uHazeDensity', p.hazeDensity)
+        .float('uHazeG', p.hazeAnisotropy)
+        .float('uHazeDepth', p.hazeDepth)
+        .int('uHazeSteps', hazeSteps)
+        .float('uVignetteBoost', p.vignetteBoost);
+    {
+      const ext = mediumExtinction(p.mediumColor, p.mediumTint);
+      prog.float('uBeamAspect', beamAspect(p.beamSpread))
+          .float('uHazeBack', p.hazeBackscatter)
+          .vec3('uMediumExt', ext[0], ext[1], ext[2])
+          .float('uBeamExtinct', p.beamExtinct)
+          .float('uFogSettle', p.fogSettle)
+          .float('uGoboAmount', p.goboAmount)
+          .float('uGoboScale', p.goboScale)
+          .float('uGoboSharp', p.goboSharp)
+          .float('uGoboOffset', p.goboOffset)
+          .float('uGoboNorm', goboNorm(p.goboSharp))
+          .float('uGoboBlur', p.goboBlur)
+          .int('uGoboPlane', p.goboPlane ? 1 : 0)
+          .float('uGoboDist', p.goboDist)
+          .float('uGoboAperture', p.goboAperture)
+          .float('uNoiseAmount', p.noiseAmount)
+          .float('uNoiseScale', p.noiseScale)
+          // Вторая октава — не ползунок, а свойство рисунка: её крутили один раз
+          // при настройке и больше не трогали. 0.35 — то, на чём остановились.
+          .float('uNoiseDetail', 0.35)
+          // Клубы сносит тем же «Сдвигом рисунка», что и лучи, только медленнее:
+          // перебирают их всегда вместе, до удачного места.
+          .float('uNoiseDrift', p.goboOffset * 0.7)
+          .int('uFloorOn', p.floorOn ? 1 : 0)
+          .float('uFloorY', p.floorY)
+          .float('uFloorBlend', p.floorBlend)
+          .int('uParticlesOn', p.particlesOn ? 1 : 0)
+          .float('uParticleDensity', p.particleDensity)
+          .float('uParticleSize', p.particleSize)
+          .float('uParticleGlow', p.particleGlow)
+          .float('uMsAmount', p.msAmount)
+          .float('uAnimSpeed', p.animate ? p.animSpeed : 0)
+          .float('uTime', p.animate ? (opts.time ?? this.time ?? 0) : 0);
+      // Нормаль пола — наклон от вертикали к камере. При 90° пол совпал бы со
+      // стеной, поэтому ползунок туда не доходит.
+      const ft = deg(p.floorTilt);
+      prog.vec3('uFloorNormal', 0, Math.cos(ft), Math.sin(ft));
+    }
+    gl.disable(gl.BLEND);
+    this.draw();
+  }
+
+  bloomPass(p) {
+    const gl = this.gl;
+    if (p.bloomIntensity <= 0.0001) {
+      // всё равно нужен чистый буфер, чтобы композит не читал мусор
+      this.mips[0].bind();
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      return this.mips[0];
+    }
+
+    let src = this.sceneFbo;
+    // доводим кадр до базы цепочки без порога — это чистое усреднение
+    for (let i = 0; i < this.preSteps; i++) {
+      const dst = this.pre[i];
+      dst.bind();
+      this.pDown.use()
+        .texture('uSrc', src.tex)
+        .vec2('uTexel', 1 / src.width, 1 / src.height)
+        .int('uPrefilter', 0);
+      this.draw();
+      src = dst;
+    }
+    for (let i = 0; i < BLOOM_LEVELS; i++) {
+      const dst = this.mips[i];
+      dst.bind();
+      this.pDown.use()
+        .texture('uSrc', src.tex)
+        .vec2('uTexel', 1 / src.width, 1 / src.height)
+        .int('uPrefilter', i === 0 ? 1 : 0)
+        .float('uThreshold', p.bloomThreshold)
+        .float('uKnee', Math.max(0.05, p.bloomThreshold * 0.5));
+      this.draw();
+      src = dst;
+    }
+
+    // апсэмпл с аддитивным смешением, радиус — в UV
+    const radius = 0.0015 + p.bloomRadius * 0.010;
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    for (let i = BLOOM_LEVELS - 1; i > 0; i--) {
+      const dst = this.mips[i - 1];
+      dst.bind();
+      this.pUp.use().texture('uSrc', this.mips[i].tex).float('uRadius', radius);
+      this.draw();
+    }
+    gl.disable(gl.BLEND);
+    return this.mips[0];
+  }
+
+  compositePass(p, w, h, bloomTex, target, tonemap = true) {
+    const gl = this.gl;
+    if (target) {
+      target.bind();
+    } else {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, w, h);
+    }
+    this.pComposite.use()
+      .texture('uScene', this.sceneFbo.tex)
+      .texture('uBloom', bloomTex)
+      .float('uBloomIntensity', p.bloomIntensity)
+      .float('uGrain', p.grainAmount)
+      .vec2('uResolution', w, h)
+      .float('uGrainScale', h / 1080)
+      .float('uSeed', p.seed ?? 17.0)
+      .float('uSaturation', p.saturation ?? 1.0)
+      .int('uTonemap', tonemap ? 1 : 0);
+    gl.disable(gl.BLEND);
+    this.draw();
+  }
+
+  /*
+    Смешивает свежий кадр с историей и отдаёт буфер, который дальше читают
+    bloom и композит. alpha = 1 отбрасывает историю целиком — с этого начинается
+    любое накопление, потому что в буфере до первого кадра лежит мусор.
+  */
+  accumPass(alpha) {
+    /*
+      Буферы истории заводятся по требованию, а не на каждом ресайзе. Без этого
+      обычный экспорт в 4K тащил бы за собой две лишние RGBA16F-текстуры по
+      66 МБ, которые ему не нужны вовсе: накопления там нет.
+
+      История после смены размера — мусор, но это безопасно: накопление всегда
+      начинается с alpha = 1, а любое изменение размера идёт через layout(),
+      который выставляет dirty и обнуляет счётчик кадров.
+    */
+    const [w, h] = this.size;
+    if (this.hist[0].width !== w || this.hist[0].height !== h) {
+      this.hist[0].resize(w, h);
+      this.hist[1].resize(w, h);
+    }
+    const dst = this.hist[this.histIdx ^ 1];
+    dst.bind();
+    this.pAccum.use()
+      .texture('uCurrent', this.scene.tex)
+      .texture('uHistory', this.hist[this.histIdx].tex)
+      .float('uAlpha', alpha);
+    this.gl.disable(this.gl.BLEND);
+    this.draw();
+    this.histIdx ^= 1;
+    return dst;
+  }
+
+  /**
+   * Полный кадр.
+   * @param opts.mode      full | base | light | haze | spec
+   * @param opts.hazeSteps число шагов марша
+   * @param opts.target    Fbo или null (тогда — в канвас)
+   * @param opts.frame     номер кадра: сдвигает джиттер марша
+   * @param opts.alpha     доля свежего кадра при накоплении; без неё накопления нет
+   */
+  render(p, w, h, opts = {}) {
+    const mode = opts.mode || 'full';
+    /*
+      Цикл марша в шейдере ограничен 256 итерациями — иначе его не развернуть.
+      Шаг при этом считается как span / steps, поэтому запрос БОЛЬШЕ 256 не
+      «точнее»: цикл обрывается на 256-й, а до стены остаётся непройденный
+      кусок, и кадр молча темнеет. Ограничиваем здесь, а не оставляем ловушку.
+    */
+    const steps = Math.min(opts.hazeSteps || 32, MAX_HAZE_STEPS);
+    this.resize(w, h);
+    this.scenePass(p, w, h, mode, steps, opts);
+    // Экспорт и замер пика идут без накопления: им нужен один честный кадр,
+    // а не среднее по истории, которой у них нет.
+    this.sceneFbo = opts.alpha == null ? this.scene : this.accumPass(opts.alpha);
+    const bloomTex = this.bloomPass(p).tex;
+    this.compositePass(p, w, h, bloomTex, opts.target ?? null, opts.tonemap !== false);
+  }
+
+  readPixels(fbo) {
+    const gl = this.gl;
+    const px = new Uint8Array(fbo.width * fbo.height * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo.fb);
+    gl.readPixels(0, 0, fbo.width, fbo.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return px;
+  }
+}
+
+
+/* ===== src/ui/theme.js ===== */
+
+
+/*
+  Тема — это не цвет фона, а согласованный тональный профиль кадра.
+
+  Свет (где стоит прибор, куда светит, какой ширины луч) от темы не зависит и
+  при переключении сохраняется целиком. Тема отвечает только за то, ЧТО этот
+  свет освещает и как кадр потом сжимается в 8 бит: цвет стены, общий свет
+  комнаты, экспозиция, плотность среды, bloom, зерно, спад.
+
+  Главное обещание светлой темы: неосвещённая стена выходит РОВНО цветом темы,
+  и ниже него кадр не опускается нигде. Поэтому общий свет здесь не подбирается
+  ползунком, а решается обратной задачей — см. solveFloor.
+*/
+
+// --- тональный конвейер, копия composite.frag ---------------------------
+// Нужен, чтобы решить обратную задачу: какой ambient даст на выходе заданный
+// цвет. Держать его в двух местах неприятно, но альтернатива — читать пиксели
+// с GPU при каждом переключении темы, а это уже не чистая функция.
+
+const ACES_IN = [
+  [0.59719, 0.35458, 0.04823],
+  [0.07600, 0.90834, 0.01566],
+  [0.02840, 0.13383, 0.83777],
+];
+const ACES_OUT = [
+  [ 1.60475, -0.53108, -0.07367],
+  [-0.10208,  1.10813, -0.00605],
+  [-0.00327, -0.07276,  1.07602],
+];
+
+const mat3mul = (m, v) => m.map((r) => r[0] * v[0] + r[1] * v[1] + r[2] * v[2]);
+const lumaOf = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+
+function rrtOdtFit(v) {
+  return v.map((x) => {
+    const a = x * (x + 0.0245786) - 0.000090537;
+    const b = x * (0.983729 * x + 0.4329510) + 0.238081;
+    return a / b;
+  });
+}
+
+function acesFitted(c) {
+  return mat3mul(ACES_OUT, rrtOdtFit(mat3mul(ACES_IN, c)))
+    .map((x) => Math.min(1, Math.max(0, x)));
+}
+
+// Обратная к ACES. Кривая монотонна по каждому каналу, поэтому простой
+// покомпонентной итерации x <- x * (цель / текущее) хватает: 60 шагов сходятся
+// до 1e-6, это доли деления восьмибитной шкалы.
+function acesInvert(target) {
+  let x = target.slice();
+  for (let i = 0; i < 60; i++) {
+    const a = acesFitted(x);
+    x = x.map((v, j) => v * (target[j] + 1e-6) / (a[j] + 1e-6));
+  }
+  return x;
+}
+
+// Обратная к триму насыщенности из composite.frag. Трим не меняет яркость,
+// поэтому и вес в светах, и сама яркость берутся прямо из цели.
+function trimInvert(target, saturation) {
+  const L = lumaOf(target);
+  const t = Math.min(1, Math.max(0, (L - 0.70) / 0.30));
+  const w = 1 - t * t * (3 - 2 * t);
+  const s = 1 + (saturation - 1) * w;
+  return target.map((v) => L + (v - L) / s);
+}
+
+const linearToHex = (c) => '#' + c
+  .map((v) => {
+    const x = Math.min(1, Math.max(0, v));
+    const s = x <= 0.0031308 ? x * 12.92 : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
+    return Math.round(s * 255).toString(16).padStart(2, '0').toUpperCase();
+  })
+  .join('');
+
+const toLinear = (hex) => srgbToLinear(hexToSrgb(hex));
+
+/**
+ * Обратная задача: какой общий свет нужен, чтобы неосвещённая стена вышла
+ * ровно цветом `floorHex`.
+ *
+ * В шейдере подложка — это albedo * ambient, дальше ACES, трим и гамма. Здесь
+ * весь этот путь проходится назад, а полученная светимость раскладывается на
+ * пару «цвет заливки + уровень», которую умеет хранить пресет. Уровень выходит
+ * около 1.9 — отсюда и потолок ползунка: 0.2, как было, физически не хватает,
+ * чтобы поднять стену до светлого тона.
+ */
+function solveFloor(floorHex, albedoHex, saturation) {
+  const radiance = acesInvert(trimInvert(toLinear(floorHex), saturation));
+  const albedo = toLinear(albedoHex);
+  const e = radiance.map((v, i) => v / Math.max(albedo[i], 1e-4));
+  const def = paramDef('ambientLevel');
+  const level = Math.min(def.max, Math.max(...e));
+  return {
+    ambientLevel: Math.round(level * 1000) / 1000,
+    ambientColor: linearToHex(e.map((v) => v / level)),
+    radiance,
+  };
+}
+
+// --- профили -----------------------------------------------------------
+/*
+  Числа тёмной темы — эталон, настроенный руками (DIR_COMMON в genpresets.mjs).
+  Они здесь ровно для того, чтобы переключение туда-обратно возвращало кадр
+  в исходное состояние, а не «примерно».
+
+  Светлая тема настроена отдельно и заново. Перенести тёмную сдвигом
+  экспозиции нельзя: там кадр рисует дымка (альбедо почти нулевое, и стена
+  на свет почти не отвечает), а на светлой стене всё наоборот — картинку
+  делает диффузный отклик, а луч в дымке на белом фоне не читается вовсе.
+  Поэтому у светлой темы своя экспозиция и своя плотность среды.
+*/
+const THEMES = [
+  {
+    id: 'dark',
+    label: 'Тёмная',
+    bg: '#000B38',
+    floor: null,          // подложки нет: неосвещённая стена уходит в ноль
+    exposureEV: 3.55,
+    saturation: 1.75,
+    hazeDensity: 0.28,
+    bloomIntensity: 0.30,
+    bloomThreshold: 0.09,
+    bloomRadius: 0.55,
+    grainAmount: 0.009,
+    vignetteBoost: 0.29,
+  },
+  {
+    id: 'light',
+    label: 'Светлая',
+    // Цвет фона светлой темы. Не зашит намертво: «Цвет фона» на этой теме можно
+    // менять как угодно, заливка пересчитается под него (refloor), и стена снова
+    // выйдет ровно выбранным цветом. Проверено на #C6CBD9, #C3C8D3 и #9AA3B5.
+    bg: '#C6CBD9',
+    floor: true,
+    // Верх шкалы: куда тема ставит самое яркое место кадра (8 бит по яркости,
+    // верхние полпроцента пикселей). Экспозиция под это число досчитывается —
+    // см. autoExpose. Одного фиксированного EV мало: у направлений прибор
+    // стоит далеко за кадром и светит вскользь, у светлячка — вплотную и
+    // широко, и одно и то же усиление даёт то ровный градиент, то белую заливку.
+    peak: 251,
+    // Результат калибровки на эталонной геометрии направлений. Стартовое
+    // значение и то, что останется, если считать пик нечем.
+    exposureEV: 6.3,
+    saturation: 1.0,
+    hazeDensity: 0.10,
+    bloomIntensity: 0.35,
+    bloomThreshold: 2.4,  // стартовое; refloor пересчитает его под выбранный фон
+    bloomRadius: 0.65,
+    grainAmount: 0.005,
+    vignetteBoost: 0.20,
+  },
+];
+
+const themeById = (id) => THEMES.find((t) => t.id === id) || THEMES[0];
+
+const TONAL = [
+  'exposureEV', 'saturation', 'hazeDensity',
+  'bloomIntensity', 'bloomThreshold', 'bloomRadius',
+  'grainAmount', 'vignetteBoost',
+];
+
+/**
+ * Переносит кадр в другую тему на месте.
+ *
+ * Расстановка света не трогается: положение, поворот, наклон, ширина луча,
+ * рассеиватель, дальность, глубина объёма и анизотропия остаются как были.
+ * Второй источник сохраняет свой СДВИГ по экспозиции относительно главного —
+ * иначе при смене темы он либо пропадал бы, либо вылезал вперёд.
+ */
+/**
+ * Пересчитывает общий свет под текущий цвет стены.
+ *
+ * На светлой теме цвет фона — не декорация, а обещание: неосвещённая стена
+ * обязана выходить ровно им. Значит, стоит человеку выбрать другой цвет, как
+ * заливку надо решить заново — иначе фон уедет, а ползунок «Заливка» останется
+ * от прежнего цвета. На тёмной теме подложки нет, и пересчитывать нечего.
+ */
+function refloor(state) {
+  const t = themeById(state.theme);
+  if (!t.floor) return state;
+  const a = solveFloor(state.albedo, state.albedo, state.saturation);
+  state.ambientLevel = a.ambientLevel;
+  state.ambientColor = a.ambientColor;
+
+  /*
+    Порог bloom тоже считается от подложки, а не берётся из профиля.
+
+    Мягкое колено в префильтре начинается на половине порога, поэтому порог
+    обязан быть вдвое выше яркости подложки. Иначе ровный фон проходит через
+    bloom сам и подсвечивает себя: прибавка выходит одинаковой по всему кадру,
+    фон уезжает вверх, и обещание «стена равна выбранному цвету» ломается
+    молча. На светлом фоне это уже не теория — у #EDEEF2 подложка ярче 2.6.
+  */
+  const luma = lumaOf(a.radiance);
+  const d = paramDef('bloomThreshold');
+  state.bloomThreshold = Math.min(d.max, Math.round(luma * 2.2 * 100) / 100);
+  return state;
+}
+
+function applyTheme(state, id) {
+  const t = themeById(id);
+  const shift = state.fill.exposureEV - state.exposureEV;
+
+  state.albedo = t.bg;
+  // Отметку ставим до пересчёта: refloor смотрит на неё, чтобы понять,
+  // есть ли у темы подложка вообще.
+  state.theme = t.id;
+  for (const k of TONAL) {
+    const d = paramDef(k);
+    state[k] = Math.min(d.max, Math.max(d.min, t[k]));
+  }
+  if (t.floor) {
+    refloor(state);
+  } else {
+    state.ambientLevel = 0;
+    state.ambientColor = '#FFFFFF';
+  }
+
+  const d = paramDef('exposureEV');
+  state.fill.exposureEV = Math.min(d.max, Math.max(d.min, state.exposureEV + shift));
+  return state;
+}
+
+/**
+ * Ставит экспозицию так, чтобы верх кадра пришёл в объявленный темой пик.
+ *
+ * Экспозиция — чистое усиление света, и статистика кадра по ней монотонна,
+ * поэтому хватает деления отрезка пополам. Считается не максимум, а верхние
+ * полпроцента: один горячий пиксель (искра источника, у которой яркость по
+ * замыслу не зависит от экспозиции) не должен определять весь кадр.
+ *
+ * `measure(state)` -> яркость верхних 0.5% кадра в восьмибитной шкале.
+ * Второй источник едет за главным своим сдвигом, как и при смене темы.
+ */
+function autoExpose(state, measure) {
+  const t = themeById(state.theme);
+  if (!t.peak) return state;
+  const d = paramDef('exposureEV');
+  const shift = state.fill.exposureEV - state.exposureEV;
+  const put = (ev) => {
+    state.exposureEV = ev;
+    state.fill.exposureEV = Math.min(d.max, Math.max(d.min, ev + shift));
+  };
+
+  let lo = d.min, hi = d.max;
+  for (let i = 0; i < 11; i++) {
+    const mid = (lo + hi) / 2;
+    put(mid);
+    if (measure(state) < t.peak) lo = mid; else hi = mid;
+  }
+  // Округление к шагу ползунка — через строку, иначе умножение на 0.05
+  // отдаёт 6.300000000000001, и это уезжает в сохранённый JSON.
+  const step = paramDef('exposureEV').step;
+  const dec = String(step).split('.')[1]?.length ?? 0;
+  put(+(Math.round(((lo + hi) / 2) / step) * step).toFixed(dec));
+  return state;
+}
+
+
+/* ===== src/ui/controls.js ===== */
+
+
+const get = (obj, path) => path.split('.').reduce((o, k) => (o ? o[k] : undefined), obj);
+const set = (obj, path, v) => {
+  const parts = path.split('.');
+  const last = parts.pop();
+  const t = parts.reduce((o, k) => o[k], obj);
+  t[last] = v;
+};
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+// Нелинейная шкала ползунка: t в 0..1 <-> значение параметра.
+const fromCurve = (def, t) => {
+  const v = def.min + (def.max - def.min) * Math.pow(t, def.curve);
+  const dec = Math.max(0, String(def.step).split('.')[1]?.length ?? 0);
+  return +v.toFixed(dec);
+};
+const toCurve = (def, v) => {
+  const x = (v - def.min) / (def.max - def.min);
+  return Math.pow(Math.max(0, Math.min(1, x)), 1 / def.curve);
+};
+
+const fmt = (v, step) => {
+  if (typeof v !== 'number') return String(v);
+  const dec = step >= 1 ? 0 : String(step).split('.')[1]?.length ?? 2;
+  return v.toFixed(Math.min(dec, 4));
+};
+
+class Controls {
+  constructor(state, onChange) {
+    this.state = state;
+    this.onChange = onChange;
+    this.onParamSet = null;
+    this.onTheme = null;
+    // Ставится снаружи: часть параметров управляет тем, какие строки в панели
+    // вообще есть, и после них панель надо собрать заново.
+    this.onRebuild = null;
+    this.bindings = [];
+  }
+
+  apply(path, value) {
+    set(this.state, path, value);
+    this.onParamSet?.(path, value);
+    this.commit();
+  }
+
+  // Один параметр может иметь несколько контролов — все они слушают
+  // одно состояние.
+  row(def, path) {
+    const wrap = el('div', 'row');
+
+    const head = el('div', 'row-head');
+    head.appendChild(el('label', 'row-label', def.label));
+    const val = el('span', 'row-val');
+    head.appendChild(val);
+    wrap.appendChild(head);
+
+    let input;
+    if (def.type === 'range') {
+      input = el('input', 'slider');
+      input.type = 'range';
+      if (def.curve) {
+        // Ползунок ходит по 0..1, а значение растёт степенью: у нуля шкала
+        // остаётся плотной, дальний конец добирает крупные значения. Нужно
+        // там, где один параметр обслуживает и доли процента, и единицы.
+        input.min = 0; input.max = 1; input.step = 0.001;
+        input.addEventListener('input', () => this.apply(path, fromCurve(def, parseFloat(input.value))));
+      } else {
+        input.min = def.min; input.max = def.max; input.step = def.step;
+        input.addEventListener('input', () => this.apply(path, parseFloat(input.value)));
+      }
+      // Ползунок, от которого зависит наличие других строк, перестраивает панель
+      // по ОТПУСКАНИЮ, а не по каждому движению: иначе строки прыгали бы под
+      // курсором всё перетаскивание.
+      if (def.rebuilds) input.addEventListener('change', () => this.onRebuild?.());
+    } else if (def.type === 'color') {
+      input = el('input', 'color');
+      input.type = 'color';
+      input.addEventListener('input', () => this.apply(path, input.value.toUpperCase()));
+    } else if (def.type === 'select') {
+      input = el('select', 'select');
+      for (const [v, label] of def.options) {
+        const o = el('option', null, label);
+        o.value = v;
+        input.appendChild(o);
+      }
+      input.addEventListener('change', () => {
+        this.apply(path, input.value);
+        // от типа прибора зависит, какие его строки вообще имеют смысл
+        if (def.key === 'lightType') this.onRebuild?.();
+      });
+    } else if (def.type === 'toggle') {
+      input = el('input', 'toggle');
+      input.type = 'checkbox';
+      input.addEventListener('change', () => {
+        this.apply(path, input.checked);
+        if (def.rebuilds) this.onRebuild?.();
+      });
+    }
+    wrap.appendChild(input);
+    if (def.hint) wrap.appendChild(el('div', 'row-hint', def.hint));
+
+    const refresh = () => {
+      const v = get(this.state, path);
+      if (def.type === 'range') {
+        input.value = def.curve ? toCurve(def, v) : v;
+        val.textContent = fmt(v, def.step) + (def.unit || '');
+      } else if (def.type === 'color') {
+        input.value = typeof v === 'string' ? v.toLowerCase() : '#000000';
+        val.textContent = String(v).toUpperCase();
+      } else if (def.type === 'select') {
+        input.value = v;
+        val.textContent = '';
+      } else if (def.type === 'toggle') {
+        input.checked = !!v;
+        val.textContent = '';
+      }
+    };
+    this.bindings.push({ path, refresh });
+    refresh();
+    return wrap;
+  }
+
+  // Тема — не цвет фона, а тональный профиль целиком: стена, общий свет,
+  // экспозиция, среда, bloom, спад. Расстановка света переносится как есть,
+  // поэтому переключаться можно в любой момент и в любую сторону.
+  themeRow() {
+    const wrap = el('div', 'row row-buttons');
+    wrap.appendChild(el('div', 'row-label', 'Тема'));
+    const grid = el('div', 'seg seg-2');
+    const btns = [];
+    for (const t of THEMES) {
+      const b = el('button', 'seg-btn');
+      b.appendChild(el('span', 'seg-cap seg-cap-wide', t.label));
+      b.addEventListener('click', () => {
+        // Повторное нажатие по активной теме ничего не делает: иначе оно
+        // молча стёрло бы ручную доводку тональных ползунков.
+        if (this.state.theme === t.id) return;
+        // Переключением заведует main.js: после профиля темы нужен ещё замер
+        // кадра, а это уже рендерер. Без хука — хотя бы профиль.
+        if (this.onTheme) this.onTheme(t.id); else applyTheme(this.state, t.id);
+        this.onParamSet?.('theme', t.id);
+        this.commit();
+      });
+      grid.appendChild(b);
+      btns.push([t.id, b]);
+    }
+    wrap.appendChild(grid);
+    wrap.appendChild(el('div', 'row-hint',
+      'Переносит расстановку света в другую комнату: положение, поворот и ширина луча остаются, ' +
+      'меняются стена, общий свет и тональность. На светлой теме неосвещённая стена выходит ' +
+      'в точности тем цветом, который стоит в «Цвете фона», и ниже кадр не опускается нигде.'));
+    const refresh = () => {
+      for (const [id, b] of btns) b.classList.toggle('on', this.state.theme === id);
+    };
+    this.bindings.push({ path: 'theme', refresh });
+    refresh();
+    return wrap;
+  }
+
+  // Шесть направлений — ярлыки на непрерывной оси поворота, а не отдельный
+  // параметр. Кнопка ставит круглый азимут и переносит источник на типовое
+  // место; дальше поворот крутится ползунком, и подсветка сама гаснет.
+  directionRow(path, onPick) {
+    const wrap = el('div', 'row row-buttons');
+    wrap.appendChild(el('div', 'row-label', 'Направление'));
+    const grid = el('div', 'seg');
+    const btns = [];
+    for (const d of DIRECTIONS) {
+      const b = el('button', 'seg-btn');
+      b.appendChild(el('span', 'seg-glyph', d.short));
+      b.appendChild(el('span', 'seg-cap', d.label));
+      b.title = d.label;
+      b.addEventListener('click', () => { onPick(d); this.commit(); });
+      grid.appendChild(b);
+      btns.push([d.az, b]);
+    }
+    wrap.appendChild(grid);
+    const refresh = () => {
+      const v = get(this.state, path);
+      for (const [az, b] of btns) b.classList.toggle('on', Math.abs(az - v) < 0.5);
+    };
+    this.bindings.push({ path, refresh });
+    refresh();
+    return wrap;
+  }
+
+  // Числовые поля: то же состояние, что и перетаскивание по превью,
+  // но с точностью до сотой и с возможностью повторить чужой кадр.
+  vectorRow(label, items) {
+    const wrap = el('div', 'row row-vec');
+    wrap.appendChild(el('div', 'row-label', label));
+    const grid = el('div', 'vec');
+
+    for (const { path, cap, def } of items) {
+      const cell = el('div', 'vec-cell');
+      cell.appendChild(el('span', 'vec-cap', cap));
+      const input = el('input', 'vec-input');
+      input.type = 'number';
+      input.min = def.min; input.max = def.max; input.step = def.step;
+
+      const push = () => {
+        const v = parseFloat(input.value);
+        if (!Number.isFinite(v)) return;
+        this.apply(path, Math.min(def.max, Math.max(def.min, v)));
+      };
+      // «-» и «0.» — промежуточные состояния набора, на них не дёргаемся
+      input.addEventListener('input', () => {
+        if (/^-?\d*\.?\d+$/.test(input.value.trim())) push();
+      });
+      input.addEventListener('change', push);
+      input.addEventListener('blur', () => { push(); this.sync(); });
+      cell.appendChild(input);
+      grid.appendChild(cell);
+
+      const refresh = () => {
+        // пока поле в фокусе, не перебиваем то, что человек набирает
+        if (document.activeElement === input) return;
+        const v = get(this.state, path);
+        input.value = typeof v === 'number' ? +v.toFixed(3) : v;
+      };
+      this.bindings.push({ path, refresh });
+      refresh();
+    }
+    wrap.appendChild(grid);
+    return wrap;
+  }
+
+  /*
+    Строка показывается, только если включено то, чем она управляется.
+
+    Ползунок «Размер частиц» при выключенных частицах не делает ничего и не
+    объясняет ничего — он просто занимает место и заставляет гадать, почему не
+    работает. Тот же случай у «Плотности цвета среды» при нулевом затухании:
+    цвет среды без пути по ней не виден в принципе.
+  */
+  visible(def) {
+    if (!def.showIf) return true;
+    return !!get(this.state, def.showIf);
+  }
+
+  rows(list, body) {
+    for (const d of list) if (this.visible(d)) body.appendChild(this.row(d, d.key));
+  }
+
+  commit() {
+    clampFill(this.state);
+    this.sync();
+    this.onChange();
+  }
+
+  sync() {
+    for (const b of this.bindings) b.refresh();
+  }
+
+  group(title, cls = 'group', key = title) {
+    const d = el('details', cls);
+    d.dataset.gk = key;
+    if (this._open?.has(key)) d.open = true;
+    d.appendChild(el('summary', null, title));
+    const body = el('div', 'group-body');
+    d.appendChild(body);
+    return { root: d, body };
+  }
+
+  build(root) {
+    // Панель пересобирается на каждом тумблере, поэтому раскрытость групп надо
+    // переносить: иначе «Ещё» захлопывалось бы от любого щелчка по «Полу».
+    const open = new Set();
+    for (const d of root.querySelectorAll('details')) {
+      if (d.open) open.add(d.dataset.gk || d.querySelector('summary')?.textContent || '');
+    }
+    this._open = open;
+    root.innerHTML = '';
+    this.bindings = [];
+
+    // --- верх: то, чем действительно собирается кадр --------------------
+    const top = el('div', 'primary');
+    top.appendChild(this.themeRow());
+    top.appendChild(this.directionRow('azimuth', (d) => {
+      this.state.azimuth = d.az;
+      this.state.lightX = d.pos[0];
+      this.state.lightY = d.pos[1];
+      // Второй источник — часть той же расстановки, отражаем вместе с главным.
+      this.state.fill.azimuth = d.az;
+      this.state.fill.lightX = d.fillPos[0];
+      this.state.fill.lightY = d.fillPos[1];
+    }));
+    top.appendChild(this.vectorRow('Положение источника', [
+      { path: 'lightX', cap: 'X', def: paramDef('lightX') },
+      { path: 'lightY', cap: 'Y', def: paramDef('lightY') },
+      { path: 'lightZ', cap: 'Z', def: paramDef('lightZ') },
+    ]));
+    const note = el('div', 'pos-note');
+    note.innerHTML = 'В долях короткой стороны кадра: центр — 0, края — ±0.5. ' +
+      'Можно и <b>перетаскиванием по превью</b>, колесо — Z.';
+    top.appendChild(note);
+    for (const d of PARAMS.filter((p) => p.group === 'primary')) {
+      // тема нарисована выше сегментами, положение — числовыми полями
+      if (d.key === 'theme' || d.key === 'lightX' || d.key === 'lightY') continue;
+      if (!this.visible(d)) continue;
+      top.appendChild(this.row(d, d.key));
+    }
+    root.appendChild(top);
+
+    // --- всё остальное под одной кнопкой --------------------------------
+    const { root: more, body: moreBody } = this.group('Ещё', 'group more');
+    for (const g of GROUPS) {
+      const { root: gr, body } = this.group(g.title);
+      if (g.id === 'fill') {
+        body.appendChild(this.row({ key: 'fillEnabled', label: 'Включить', type: 'toggle' }, 'fillEnabled'));
+        body.appendChild(el('div', 'note',
+          'Экспозиция второго источника жёстко ограничена сверху: главный минус 1,5 стопа. ' +
+          'Двух равноправных источников инструмент собрать не даст.'));
+        body.appendChild(el('div', 'row-hint',
+          'Направление задаётся кнопками наверху — они переносят оба источника. ' +
+          'У точечного типа поворот, наклон и ширина луча ни на что не влияют.'));
+        body.appendChild(this.vectorRow('Положение', [
+          { path: 'fill.lightX', cap: 'X', def: paramDef('lightX') },
+          { path: 'fill.lightY', cap: 'Y', def: paramDef('lightY') },
+          { path: 'fill.lightZ', cap: 'Z', def: paramDef('lightZ') },
+        ]));
+        /*
+          У точечного прибора поворот, наклон, ширина луча и рассеиватель не
+          влияют ни на что — это написано в подсказке выше, но написанное не
+          мешает их крутить и потом искать, почему ничего не происходит.
+          Во всех девяти пресетах второй источник точечный, то есть четыре
+          строки из панели не работали никогда. Прячем их по типу прибора.
+        */
+        const dead = ['azimuth', 'grazing', 'coneAngle', 'coneSoftness'];
+        for (const k of FILL_KEYS) {
+          if (k === 'lightX' || k === 'lightY' || k === 'lightZ') continue;
+          if (this.state.fill.lightType === 'point' && dead.includes(k)) continue;
+          body.appendChild(this.row(paramDef(k), 'fill.' + k));
+        }
+      } else {
+        /*
+          В каждой группе сначала то, что берут в руки, потом свёрнутая «Тонкая
+          настройка» с тем, что настраивают раз за look. Пустых групп не бывает:
+          если всё внутри спрятано тумблером, группа не рисуется вовсе.
+        */
+        const mine = PARAMS.filter((p) => p.group === g.id && this.visible(p));
+        this.rows(mine.filter((p) => !p.fine), body);
+        const fine = mine.filter((p) => p.fine);
+        if (fine.length) {
+          const sub = this.group('Тонкая настройка', 'group fine', 'fine:' + g.id);
+          this.rows(fine, sub.body);
+          body.appendChild(sub.root);
+        }
+        if (!mine.length) continue;
+      }
+      moreBody.appendChild(gr);
+    }
+    root.appendChild(more);
+    this.sync();
+  }
+}
+
+
+/* ===== src/export/exporter.js ===== */
+
+const SIZES = [
+  ['1920×1080', 1920, 1080],
+  ['2560×1440', 2560, 1440],
+  ['3840×2160', 3840, 2160],
+  ['2560×1440 · обложка VK', 2560, 1440],
+  ['1080×1350', 1080, 1350],
+  ['1080×1920', 1080, 1920],
+  ['1080×1080', 1080, 1080],
+];
+
+// Марш дымки на экспорте гуще, чем в превью: полосы от джиттера
+// в 4K заметны там, где в превью их не видно.
+const EXPORT_HAZE_STEPS = 160;
+
+function flipY(px, w, h) {
+  const row = w * 4;
+  const out = new Uint8ClampedArray(px.length);
+  for (let y = 0; y < h; y++) {
+    out.set(px.subarray(y * row, y * row + row), (h - 1 - y) * row);
+  }
+  return out;
+}
+
+function pixelsToCanvas(px, w, h) {
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  ctx.putImageData(new ImageData(flipY(px, w, h), w, h), 0, 0);
+  return cv;
+}
+
+// Офскрин-рендер в байты. Отдельно от кодирования, потому что послойная
+// выгрузка считает разности кадров и кодирует уже результат.
+function renderToPixels(renderer, params, w, h, opts = {}) {
+  const gl = renderer.gl;
+  const max = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+  if (w > max || h > max) {
+    throw new Error(`Размер ${w}×${h} больше, чем позволяет видеокарта (${max} px).`);
+  }
+  const target = new Fbo(gl, w, h, gl.RGBA8, gl.UNSIGNED_BYTE);
+  try {
+    renderer.render(params, w, h, {
+      mode: opts.mode || 'full',
+      hazeSteps: opts.hazeSteps ?? EXPORT_HAZE_STEPS,
+      target,
+    });
+    return renderer.readPixels(target);
+  } finally {
+    target.dispose();
+    renderer.size = [0, 0]; // заставить пересобрать цепочку под превью
+  }
+}
+
+async function pixelsToBlob(px, w, h, format) {
+  const cv = pixelsToCanvas(px, w, h);
+  const type = format === 'jpg' ? 'image/jpeg' : 'image/png';
+  const quality = format === 'jpg' ? 0.95 : undefined;
+  return await new Promise((res, rej) => {
+    cv.toBlob((b) => (b ? res(b) : rej(new Error('Кодировщик вернул пустой blob'))), type, quality);
+  });
+}
+
+async function renderToBlob(renderer, params, w, h, opts = {}) {
+  const px = renderToPixels(renderer, params, w, h, opts);
+  return pixelsToBlob(px, w, h, opts.format);
+}
+
+/*
+  Сохранение файла двумя путями.
+
+  Обычный — ссылка с атрибутом download. Работает везде, где инструмент лежит
+  файлом или отдаётся сервером.
+
+  Второй нужен опубликованной странице: там кадр показывается в песочнице, и
+  ссылка с download в ней не делает НИЧЕГО — молча, без ошибки. Кнопка бы
+  нажималась, а файл не появлялся. Поэтому если страница живёт внутри клиента,
+  который умеет сохранять, отдаём файл ему: он спрашивает у человека имя и
+  согласие, и только потом кладёт на диск.
+
+  Проверка одна и та же для всех выгрузок: PNG, JPG, слои, JSON и видео.
+*/
+let saveNamespace;   // undefined — ещё не спрашивали, null — здесь нельзя
+
+async function hostSaver() {
+  if (saveNamespace !== undefined) return saveNamespace;
+  const c = globalThis.claude;
+  saveNamespace = (c && typeof c.use === 'function')
+    ? await c.use('downloads').catch(() => null)
+    : null;
+  return saveNamespace;
+}
+
+async function download(blob, filename) {
+  const host = await hostSaver();
+  if (host) {
+    try {
+      await host.save({ filename, data: blob });
+    } catch (e) {
+      // «declined» — человек отказался, это не ошибка инструмента
+      if (e && e.code === 'declined') return;
+      throw new Error('Сохранить не удалось: ' + (e?.message || e?.code || e));
+    }
+    return;
+  }
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+
+/* ===== src/export/layers.js ===== */
+
+/*
+  Три файла, которые складываются в полный кадр ТОЧНО.
+
+  Раньше каждый слой рендерился сам по себе и проходил tonemap отдельно, а
+  дизайнер складывал их режимом Screen. Screen — не сложение, и совпадение было
+  случайным везением тёмного фона: на тёмной теме расхождение с полным кадром
+  держалось около 1.5/255, а на светлой Screen по светлой подложке насыщается,
+  и расхождение доходило до 17.
+
+  Поэтому слои считаются НАКОПИТЕЛЬНО, а на диск идут разности уже в экранном
+  пространстве:
+
+      base   = ACES(подложка)
+      light  = ACES(подложка + прямой свет) − ACES(подложка)
+      haze   = ACES(полный кадр) − ACES(подложка + прямой свет)
+
+  Сумма трёх файлов по построению равна полному кадру: разности целочисленные,
+  и промежуточные ступени сокращаются. Зерно и дизер тоже сокращаются — они
+  считаются от координаты пикселя и одинаковы во всех трёх проходах, поэтому
+  шум целиком остаётся в base и не утраивается.
+
+  Складывать нужно СЛОЖЕНИЕМ, а не Screen: в Фигме это режим «Plus lighter».
+
+  Блик отдельным файлом больше не выгружается: он входит в прямой свет, то есть
+  уже лежит в `light`, и четвёртым слоем поверх давал двойной счёт.
+*/
+const LAYERS = [
+  ['base',  'подложка: стена и общий свет, кладётся вниз'],
+  ['light', 'прямой свет приборов, сложением'],
+  ['haze',  'среда и искра источника, сложением'],
+];
+
+// Разность двух кадров в байтах. Отрицательного здесь быть не должно: ACES
+// монотонна по прибавке света. Но матрица на выходе знакопеременная, и на
+// сильно цветном свете один канал теоретически может уйти вниз — такие пиксели
+// подрезаются в ноль, а их число возвращается, чтобы это не осталось незаметным.
+function difference(hi, lo) {
+  const out = new Uint8Array(hi.length);
+  let clipped = 0;
+  for (let i = 0; i < hi.length; i += 4) {
+    for (let c = 0; c < 3; c++) {
+      const d = hi[i + c] - lo[i + c];
+      if (d < 0) clipped++;
+      out[i + c] = d < 0 ? 0 : d;
+    }
+    out[i + 3] = 255;
+  }
+  return { out, clipped };
+}
+
+async function exportLayers(renderer, params, w, h, name, onStep) {
+  const opts = { hazeSteps: EXPORT_HAZE_STEPS };
+  const save = async (mode, px, note) => {
+    onStep?.(mode, note);
+    /*
+      Ждём КАЖДОЕ сохранение, а не запускаем три подряд.
+
+      На опубликованной странице файл отдаётся через хост, и тот показывает по
+      одному запросу за раз: без ожидания два слоя из трёх просто потерялись бы.
+      Обычной ссылке ожидание тоже не мешает — паузу между загрузками браузеру
+      всё равно надо было давать.
+    */
+    await download(await pixelsToBlob(px, w, h, 'png'), `${name}_${mode}.png`);
+    await new Promise((r) => setTimeout(r, 350));
+  };
+
+  let clipped = 0;
+
+  let base = renderToPixels(renderer, params, w, h, { ...opts, mode: 'base' });
+  await save('base', base, LAYERS[0][1]);
+
+  let stack = renderToPixels(renderer, params, w, h, { ...opts, mode: 'stack' });
+  const light = difference(stack, base);
+  clipped += light.clipped;
+  base = null;
+  await save('light', light.out, LAYERS[1][1]);
+
+  const full = renderToPixels(renderer, params, w, h, { ...opts, mode: 'full' });
+  const haze = difference(full, stack);
+  clipped += haze.clipped;
+  stack = null;
+  await save('haze', haze.out, LAYERS[2][1]);
+
+  return { clipped };
+}
+
+
+/* ===== src/export/video.js ===== */
+/*
+  Запись короткого ролика с оживлённого превью.
+
+  Пишется тем, что есть в браузере: canvas.captureStream() плюс MediaRecorder.
+  Ни кодека, ни муксера в проект не тянется — «Фотон» остаётся без зависимостей,
+  а один HTML по-прежнему открывается двойным кликом.
+
+  Формат выбирается по факту, а не по желанию. MP4 из MediaRecorder умеют не все
+  браузеры: там, где умеют, берём его, где нет — WebM. Врать в расширении файла
+  нельзя: контейнер будет тот, который на самом деле отдал браузер.
+
+  Пишется ровно то, что видно в превью, в его натуральном разрешении. Отдельный
+  офскрин-рендер был бы качественнее, но у него другая беда: кадры пришлось бы
+  гнать через readPixels и 2D-канвас, а MediaRecorder всё равно ставит метки
+  времени по стенным часам — при медленном рендере ролик поехал бы в замедление.
+  Запись с живого канваса от этого свободна: сколько кадров успели, столько и
+  легло, а время в них честное.
+*/
+
+// Порядок — от предпочтительного к запасному.
+const TYPES = [
+  ['video/mp4;codecs=avc1.42003e', 'mp4'],
+  ['video/mp4;codecs=avc1', 'mp4'],
+  ['video/mp4', 'mp4'],
+  ['video/webm;codecs=vp9', 'webm'],
+  ['video/webm;codecs=vp8', 'webm'],
+  ['video/webm', 'webm'],
+];
+
+function pickVideoType() {
+  if (typeof MediaRecorder === 'undefined') return null;
+  for (const [mime, ext] of TYPES) {
+    if (MediaRecorder.isTypeSupported(mime)) return { mime, ext };
+  }
+  return null;
+}
+
+const VIDEO_FPS = [24, 30, 60];
+
+/**
+ * Пишет канвас заданное время.
+ *
+ * @param canvas    что писать; должен рисоваться всё это время сам
+ * @param seconds   длительность
+ * @param fps       частота захвата
+ * @param bitrate   бит в секунду
+ * @param onTick    (прошло, всего) — для строки состояния
+ * @returns {Promise<{blob: Blob, ext: string, mime: string}>}
+ */
+function recordCanvas(canvas, { seconds = 5, fps = 30, bitrate = 12e6, onTick } = {}) {
+  const type = pickVideoType();
+  if (!type) throw new Error('Браузер не умеет записывать видео из канваса (нет MediaRecorder).');
+
+  const stream = canvas.captureStream(fps);
+  const rec = new MediaRecorder(stream, { mimeType: type.mime, videoBitsPerSecond: bitrate });
+  const chunks = [];
+
+  return new Promise((resolve, reject) => {
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onerror = (e) => reject(e.error || new Error('Запись оборвалась'));
+    rec.onstop = () => {
+      for (const t of stream.getTracks()) t.stop();
+      const blob = new Blob(chunks, { type: type.mime });
+      if (!blob.size) { reject(new Error('Браузер отдал пустой файл — запись не пошла.')); return; }
+      resolve({ blob, ext: type.ext, mime: type.mime });
+    };
+
+    const started = performance.now();
+    /*
+      Останов по времени ведём через requestAnimationFrame, а не setTimeout.
+
+      Причина простая: пока вкладка спрятана, rAF не тикает — а значит и кадры
+      в поток не идут. По таймеру запись бы закончилась вовремя, но с дырой
+      посередине; по кадрам она просто подождёт, пока вкладку вернут.
+    */
+    const tick = () => {
+      const passed = (performance.now() - started) / 1000;
+      onTick?.(Math.min(passed, seconds), seconds);
+      if (passed >= seconds) { rec.stop(); return; }
+      requestAnimationFrame(tick);
+    };
+
+    rec.start();
+    requestAnimationFrame(tick);
+  });
+}
+
+
+/* ===== src/main.js ===== */
+
+
+
+
+
+
+
+
+
+// Дымка теперь включена во всех пресетах, поэтому шагов марша в превью нужно
+// больше: на 32 шагах джиттер заметен в ярких местах луча. Кадр считается
+// только при изменении параметров, так что цена невелика.
+const PREVIEW_HAZE_STEPS = 64;
+/*
+  Марш во вкладке «Объём» копится по кадрам: джиттер сдвигается от кадра к
+  кадру, и среднее по нескольким кадрам точнее одного.
+
+  Выигрыш скромнее, чем хотелось бы, и причина в устройстве джиттера: он один
+  на весь луч, а не свой на каждый шаг. Так сделано в базовом шейдере, и менять
+  нельзя — на побайтном совпадении с ним держится вся нейтральность вкладки.
+  Один сдвиг на луч означает, что кадры не независимы, и вместо ожидаемого
+  корня из числа кадров выходит примерно полтора раза.
+
+  Замерено против эталона в 256 шагов, среднее отклонение по кадру:
+
+      шагов   один кадр   пять кадров   мс/кадр
+        16      0.42        0.31         12.4
+        24      0.27        0.19         16.8
+        32      0.19        0.14         19.2
+      было: 30 шагов без накопления — 0.21 при 18.3 мс
+
+  Взято 24: и точнее прежнего, и дешевле прежнего. Тридцать два дали бы ещё
+  треть точности за лишние 5% времени, но разница 0.19 против 0.14 деления
+  восьмибитной шкалы глазом не различима, а запас понадобится следующему шагу.
+
+  Остановленный кадр: обычные 64 шага, дальше ещё семь кадров честным средним —
+  0.083 против 0.046, то есть вдвое ближе к эталону. Дошлифовка идёт только во
+  вкладке «Объём»: в базовом режиме джиттер по кадрам не сдвигается, и усреднять
+  там нечего.
+*/
+const ANIMATED_HAZE_STEPS = 24;
+const ANIMATED_ALPHA = 0.2;
+const REFINE_FRAMES = 8;
+const MAX_DPR = 2;
+
+const $ = (id) => document.getElementById(id);
+const view = $('view');
+const wrap = $('wrap');
+const marker = $('marker');
+const statusEl = $('status');
+
+let state = defaults();
+let renderer;
+const startedAt = performance.now();
+let dirty = true;
+let aspect = 1920 / 1080;
+/*
+  Имя пресета живёт в поле ввода, а не в переменной.
+
+  Раньше кнопка «Сохранить JSON» брала имя от последнего ЗАГРУЖЕННОГО пресета,
+  а кнопки направления его не меняли. Поэтому файл, снятый после накрутки
+  своего варианта, внутри всё равно назывался чужим именем, и ориентироваться
+  приходилось на имя файла. Теперь имя видно и правится до сохранения.
+*/
+const nameField = () => $('presetName');
+function setPresetName(v) { nameField().value = v; }
+function presetNameNow() {
+  const v = nameField().value.trim();
+  // пустое поле — не повод отдать файл без имени
+  return v || 'photon';
+}
+
+function fatal(err) {
+  const box = $('fatal');
+  box.style.display = 'block';
+  box.textContent = 'Фотон не запустился.\n\n' + (err && err.stack ? err.stack : String(err));
+  console.error(err);
+}
+
+function say(msg) { statusEl.textContent = msg || ''; }
+
+// --- геометрия превью --------------------------------------------------
+
+function layout() {
+  const stage = $('stage');
+  const availW = stage.clientWidth - 56;
+  const availH = stage.clientHeight - 56;
+  let w = availW;
+  let h = w / aspect;
+  if (h > availH) { h = availH; w = h * aspect; }
+  w = Math.max(64, Math.floor(w));
+  h = Math.max(64, Math.floor(h));
+  wrap.style.width = w + 'px';
+  wrap.style.height = h + 'px';
+  view.style.width = w + 'px';
+  view.style.height = h + 'px';
+  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+  view.width = Math.floor(w * dpr);
+  view.height = Math.floor(h * dpr);
+  dirty = true;
+}
+
+// Обратная к тому, что делает шейдер: пиксель <-> точка на плоскости.
+function planeToCss(x, y) {
+  const w = view.clientWidth, h = view.clientHeight;
+  const a = w / h;
+  let ux = x, uy = y;
+  if (a > 1) ux /= a; else uy *= a;
+  return [(ux + 0.5) * w, (0.5 - uy) * h];
+}
+
+function cssToPlane(px, py) {
+  const w = view.clientWidth, h = view.clientHeight;
+  const a = w / h;
+  let ux = px / w - 0.5;
+  let uy = 0.5 - py / h;
+  if (a > 1) ux *= a; else uy /= a;
+  return [ux, uy];
+}
+
+function updateMarker() {
+  const [mx, my] = planeToCss(state.lightX, state.lightY);
+  marker.style.left = mx + 'px';
+  marker.style.top = my + 'px';
+  const inside = mx >= -20 && my >= -20 && mx <= view.clientWidth + 20 && my <= view.clientHeight + 20;
+  marker.style.opacity = inside ? '1' : '.25';
+  const scale = 0.6 + Math.min(state.lightZ, 3) * 0.5;
+  marker.style.transform = `scale(${scale.toFixed(2)})`;
+}
+
+// --- цикл --------------------------------------------------------------
+
+/*
+  Счётчик кадров накопления. Ноль означает «история недействительна»: первый
+  кадр после любого изменения идёт с alpha = 1 и затирает её целиком.
+*/
+let accumFrame = 0;
+
+function frame() {
+  if (!renderer) { requestAnimationFrame(frame); return; }
+
+  const live = state.animate;
+  if (live) {
+    // Время идёт от старта страницы, а не от включения тумблера: иначе каждое
+    // переключение дёргало бы рисунок в начало.
+    renderer.time = (performance.now() - startedAt) / 1000;
+  }
+  if (dirty) { accumFrame = 0; dirty = false; }
+
+  const refine = accumFrame < REFINE_FRAMES;
+  if (!live && !refine) { requestAnimationFrame(frame); return; }
+
+  /*
+    Живой кадр — скользящее среднее: alpha не опускается ниже порога, иначе
+    история копилась бы бесконечно и картинка размазалась бы. Остановленный —
+    честное среднее 1/n, оно сходится к точному значению.
+  */
+  const alpha = live
+    ? Math.max(ANIMATED_ALPHA, 1 / (accumFrame + 1))
+    : 1 / (accumFrame + 1);
+
+  try {
+    renderer.render(state, view.width, view.height, {
+      hazeSteps: live ? ANIMATED_HAZE_STEPS : PREVIEW_HAZE_STEPS,
+      frame: accumFrame,
+      alpha,
+    });
+  } catch (e) { fatal(e); return; }
+  accumFrame++;
+  updateMarker();
+  requestAnimationFrame(frame);
+}
+
+const invalidate = () => { dirty = true; };
+
+/*
+  Замер верха кадра для автоэкспозиции темы.
+
+  Разрешение нарочно крошечное: считается статистика по всему кадру, а не
+  деталь, и десяток таких проходов вместе дешевле одного превью. Шагов марша
+  тоже мало — на пик дымки хватает, а джиттер в статистике по верхним
+  полпроцента не виден.
+*/
+const PEAK_W = 320, PEAK_H = 180;
+let peakTarget = null;
+
+function measurePeak(params) {
+  if (!peakTarget) peakTarget = new Fbo(renderer.gl, PEAK_W, PEAK_H, renderer.gl.RGBA8, renderer.gl.UNSIGNED_BYTE);
+  renderer.render(params, PEAK_W, PEAK_H, { hazeSteps: 24, target: peakTarget });
+  const px = renderer.readPixels(peakTarget);
+  renderer.size = [0, 0]; // цепочка bloom была пересобрана под замер
+  const lum = new Float32Array(px.length / 4);
+  for (let i = 0, j = 0; i < px.length; i += 4, j++) {
+    lum[j] = 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
+  }
+  lum.sort();
+  return lum[Math.floor(0.995 * (lum.length - 1))];
+}
+
+// Переключение темы целиком: профиль + подгонка экспозиции под расстановку.
+function switchTheme(id) {
+  applyTheme(state, id);
+  autoExpose(state, measurePeak);
+  clampFill(state);
+  invalidate();
+}
+
+// --- взаимодействие с превью -------------------------------------------
+
+function bindPreview(controls) {
+  let dragging = false;
+
+  // Пока фокус в числовом поле, оно не перерисовывается — иначе оно бы
+  // затирало то, что человек набирает. Значит, начиная работать с превью,
+  // фокус надо снять, иначе поле останется со старым числом.
+  const dropFocus = () => {
+    const a = document.activeElement;
+    if (a && a !== document.body && typeof a.blur === 'function') a.blur();
+  };
+  const move = (ev) => {
+    const r = view.getBoundingClientRect();
+    const [x, y] = cssToPlane(ev.clientX - r.left, ev.clientY - r.top);
+    state.lightX = Math.max(-1.5, Math.min(1.5, Math.round(x * 1000) / 1000));
+    state.lightY = Math.max(-1.5, Math.min(1.5, Math.round(y * 1000) / 1000));
+    controls.sync();
+    invalidate();
+  };
+  view.addEventListener('pointerdown', (ev) => {
+    dropFocus();
+    dragging = true;
+    view.setPointerCapture(ev.pointerId);
+    view.classList.add('dragging');
+    move(ev);
+  });
+  view.addEventListener('pointermove', (ev) => { if (dragging) move(ev); });
+  view.addEventListener('pointerup', (ev) => {
+    dragging = false;
+    view.releasePointerCapture(ev.pointerId);
+    view.classList.remove('dragging');
+  });
+  view.addEventListener('wheel', (ev) => {
+    ev.preventDefault();
+    dropFocus();
+    const k = ev.deltaY > 0 ? 1 : -1;
+    if (ev.shiftKey) {
+      state.coneAngle = Math.max(2, Math.min(90, state.coneAngle + k * 1.5));
+    } else {
+      state.lightZ = Math.max(0.05, Math.min(3, Math.round((state.lightZ + k * 0.04) * 1000) / 1000));
+    }
+    controls.sync();
+    invalidate();
+  }, { passive: false });
+}
+
+/*
+  Панель пересобирается целиком: часть параметров решает, какие строки в ней
+  вообще есть, а привязки живут одним списком и по кускам не снимаются.
+*/
+function rebuildPanel() {
+  controls.state = state;
+  controls.build($('controls'));
+}
+
+// --- пресеты и файлы ---------------------------------------------------
+
+function applyState(next, name) {
+  state = clampFill(next);
+  if (name) setPresetName(name);
+  // Пресет может включать другие тумблеры — значит и строки в панели другие.
+  rebuildPanel();
+  invalidate();
+}
+
+let controls;
+
+function bindPresetUi() {
+  const sel = $('presetSel');
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = '— выбрать —';
+  sel.appendChild(blank);
+  for (const [id, label] of PRESET_FILES) {
+    const o = document.createElement('option');
+    o.value = id; o.textContent = label;
+    sel.appendChild(o);
+  }
+  sel.addEventListener('change', async () => {
+    if (!sel.value) return;
+    try {
+      applyState(await loadPreset(sel.value), sel.value);
+      say('Пресет загружен: ' + sel.value);
+    } catch (e) { say(e.message); }
+  });
+
+  $('savePreset').addEventListener('click', async () => {
+    const name = presetNameNow();
+    // одно и то же имя и в файле, и внутри него — иначе они расходятся
+    const blob = new Blob([serialize(state, name)], { type: 'application/json' });
+    try { await download(blob, `${name}.json`); } catch (e) { say(e.message); }
+  });
+
+  $('resetBtn').addEventListener('click', () => {
+    applyState(defaults(), 'photon');
+    sel.value = '';
+    say('Сброшено к значениям по умолчанию');
+  });
+
+  // JSON перетаскиванием на окно
+  let depth = 0;
+  window.addEventListener('dragenter', (e) => { e.preventDefault(); depth++; document.body.classList.add('drop'); });
+  window.addEventListener('dragleave', () => { if (--depth <= 0) document.body.classList.remove('drop'); });
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    depth = 0;
+    document.body.classList.remove('drop');
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    try {
+      const raw = JSON.parse(await file.text());
+      applyState(sanitize(raw), (raw.name || file.name.replace(/\.json$/i, '')));
+      $('presetSel').value = '';
+      say('Загружено из ' + file.name);
+    } catch (err) { say('Не разобрал JSON: ' + err.message); }
+  });
+}
+
+// --- экспорт -----------------------------------------------------------
+
+function bindExportUi() {
+  const sel = $('sizeSel');
+  SIZES.forEach(([label, w, h], i) => {
+    const o = document.createElement('option');
+    o.value = String(i); o.textContent = label;
+    sel.appendChild(o);
+  });
+  const custom = document.createElement('option');
+  custom.value = 'custom'; custom.textContent = 'произвольный';
+  sel.appendChild(custom);
+
+  const cw = $('cw'), ch = $('ch');
+  const syncAspect = () => {
+    aspect = Math.max(0.1, (parseInt(cw.value, 10) || 1920) / (parseInt(ch.value, 10) || 1080));
+    layout();
+  };
+  sel.addEventListener('change', () => {
+    if (sel.value === 'custom') return;
+    const [, w, h] = SIZES[parseInt(sel.value, 10)];
+    cw.value = w; ch.value = h;
+    syncAspect();
+  });
+  cw.addEventListener('change', () => { sel.value = 'custom'; syncAspect(); });
+  ch.addEventListener('change', () => { sel.value = 'custom'; syncAspect(); });
+
+  const size = () => [
+    Math.max(16, Math.min(8192, parseInt(cw.value, 10) || 1920)),
+    Math.max(16, Math.min(8192, parseInt(ch.value, 10) || 1080)),
+  ];
+
+  const run = async (fn) => {
+    const btns = document.querySelectorAll('#panel .btn');
+    btns.forEach((b) => (b.disabled = true));
+    try { await fn(); } catch (e) { say('Ошибка: ' + e.message); console.error(e); }
+    btns.forEach((b) => (b.disabled = false));
+    layout();
+  };
+
+  $('exportPng').addEventListener('click', () => run(async () => {
+    const [w, h] = size();
+    say(`Рендер ${w}×${h}…`);
+    const blob = await renderToBlob(renderer, state, w, h, { format: 'png' });
+    await download(blob, `${presetNameNow()}_${w}x${h}.png`);
+    say(`Готово: ${(blob.size / 1048576).toFixed(1)} МБ`);
+  }));
+
+  $('exportJpg').addEventListener('click', () => run(async () => {
+    const [w, h] = size();
+    say(`Рендер ${w}×${h}…`);
+    const blob = await renderToBlob(renderer, state, w, h, { format: 'jpg' });
+    await download(blob, `${presetNameNow()}_${w}x${h}.jpg`);
+    say(`Готово: ${(blob.size / 1048576).toFixed(1)} МБ`);
+  }));
+
+  $('exportLayers').addEventListener('click', () => run(async () => {
+    const [w, h] = size();
+    const { clipped } = await exportLayers(renderer, state, w, h, presetNameNow(),
+      (mode, note) => say(`Слой ${mode} — ${note}`));
+    say('Три слоя выгружены. base — вниз, остальные — сложением («Plus lighter»).'
+      + (clipped ? ` Подрезано в ноль: ${clipped} значений — стопка сойдётся не точно.` : ''));
+  }));
+
+  syncAspect();
+}
+
+// --- видео ---------------------------------------------------------------
+
+const VIDEO_SECS = [3, 5, 8, 12, 20];
+
+function bindVideoUi() {
+  const secs = $('vidSecs'), fps = $('vidFps'), note = $('vidNote'), btn = $('recVideo');
+  for (const v of VIDEO_SECS) {
+    const o = document.createElement('option');
+    o.value = String(v); o.textContent = v + ' с';
+    secs.appendChild(o);
+  }
+  secs.value = '5';
+  for (const v of VIDEO_FPS) {
+    const o = document.createElement('option');
+    o.value = String(v); o.textContent = v + ' кадр/с';
+    fps.appendChild(o);
+  }
+  fps.value = '30';
+
+  /*
+    Формат объявляем заранее и честно. MP4 из MediaRecorder умеют не все
+    браузеры; там, где не умеют, файл будет WebM, и лучше человек узнает об
+    этом до записи, а не по расширению скачанного файла.
+  */
+  const type = pickVideoType();
+  if (!type) {
+    note.textContent = 'Этот браузер не умеет записывать видео из канваса. Кадры можно снять только через «Скачать PNG».';
+    btn.disabled = true;
+    return;
+  }
+  note.textContent = type.ext === 'mp4'
+    ? 'Этот браузер отдаёт MP4 (H.264).'
+    : 'Этот браузер не умеет MP4 из канваса — файл будет WebM. Он открывается везде, кроме старых версий Safari, и конвертируется в MP4 без пережатия картинки.';
+
+  btn.addEventListener('click', async () => {
+    if (!state.animate) {
+      say('Сначала включите «Оживить» в блоке «Движение»: записывать нечего, кадр неподвижен.');
+      return;
+    }
+    const s = parseInt(secs.value, 10);
+    const f = parseInt(fps.value, 10);
+    const all = document.querySelectorAll('#panel .btn, #panel select, #panel input');
+    all.forEach((b) => (b.disabled = true));
+    try {
+      const { blob, ext } = await recordCanvas(view, {
+        seconds: s, fps: f,
+        onTick: (p, t) => say(`Запись ${p.toFixed(1)} из ${t} с…`),
+      });
+      await download(blob, `${presetNameNow()}_${view.width}x${view.height}_${f}fps.${ext}`);
+      say(`Готово: ${(blob.size / 1048576).toFixed(1)} МБ, ${view.width}×${view.height}, .${ext}`);
+    } catch (e) {
+      say('Не записалось: ' + e.message);
+      console.error(e);
+    }
+    all.forEach((b) => (b.disabled = false));
+  });
+}
+
+// --- старт -------------------------------------------------------------
+
+async function boot() {
+  // Отметку сборки проставляет tools/bundle.mjs. В разработке её нет — и это
+  // тоже полезно видеть: значит, файл не из передачи.
+  $('build').textContent = globalThis.__PHOTON_ASSETS?.build ?? 'разработка';
+
+  renderer = await new Renderer(view).init('./src/shaders/');
+
+  controls = new Controls(state, invalidate);
+  controls.onTheme = switchTheme;
+  // Цвет фона на светлой теме тянет за собой заливку: см. refloor.
+  controls.onParamSet = (path) => { if (path === 'albedo') refloor(state); };
+  // Часть параметров решает, какие строки в панели вообще есть, — после них
+  // панель собирается заново.
+  controls.onRebuild = () => rebuildPanel();
+  rebuildPanel();
+
+  // Отладочный доступ из консоли: photon.renderer, photon.state.
+  window.photon = {
+    get renderer() { return renderer; },
+    get state() { return state; },
+    applyState,
+    // тема из консоли — тем же кодом, что и кнопка в панели
+    theme(id) { switchTheme(id); controls.sync(); return state; },
+    // офскрин-рендер в произвольное разрешение, возвращает RGBA-байты
+    pixels(params, w, h, opts = {}) {
+      const target = new Fbo(renderer.gl, w, h, renderer.gl.RGBA8, renderer.gl.UNSIGNED_BYTE);
+      renderer.render(params, w, h, { hazeSteps: 96, ...opts, target });
+      const px = renderer.readPixels(target);
+      target.dispose();
+      renderer.size = [0, 0];
+      return px;
+    },
+  };
+
+  bindPreview(controls);
+  bindPresetUi();
+  bindExportUi();
+  bindVideoUi();
+
+  window.addEventListener('resize', layout);
+  layout();
+  frame();
+
+  // Стартуем не с голых умолчаний: при albedo #000000 и EV 1.0 кадр почти пуст,
+  // и инструмент выглядит сломанным ещё до первого движения ползунка.
+  try {
+    applyState(await loadPreset('direction-top-left'), 'direction-top-left');
+    $('presetSel').value = 'direction-top-left';
+  } catch { /* нет пресетов — остаёмся на умолчаниях */ }
+  say('Готов.');
+}
+
+boot().catch(fatal);
+
+})();
+  </script>
+</body>
+</html>
